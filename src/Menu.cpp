@@ -120,6 +120,14 @@ static MenuDef menuDefFile[] = {
         _TRN("Save Annotations to existing PDF"),
         CmdSaveAnnotations,
     },
+    {
+        _TRN("&Highlight Key Terms"),
+        CmdHighlightKeyTerms,
+    },
+    {
+        _TRN("&Reload Search Terms"),
+        CmdReloadSearchTerms,
+    },
 //[ ACCESSKEY_ALTERNATIVE // only one of these two will be shown
 #ifdef ENABLE_SAVE_SHORTCUT
     {

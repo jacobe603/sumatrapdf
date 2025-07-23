@@ -90,6 +90,7 @@
 #include "Theme.h"
 #include "Caption.h"
 #include "DarkModeSubclass.h"
+#include "JsonSearchTerms.h"
 
 #include "utils/Log.h"
 
@@ -4409,6 +4410,140 @@ Annotation* MakeAnnotationsFromSelection(WindowTab* tab, AnnotCreateArgs* args) 
     return annot;
 }
 
+// Safe highlighting system for all key terms across entire document
+void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
+    // Basic validation
+    if (!tabPtr) {
+        MessageBoxA(nullptr, "Error: No tab specified", "Highlight Key Terms", MB_OK);
+        return;
+    }
+    
+    WindowTab* tab = (WindowTab*)tabPtr;
+    if (!tab || !tab->win) {
+        MessageBoxA(nullptr, "Error: Invalid tab or window", "Highlight Key Terms", MB_OK);
+        return;
+    }
+    
+    DisplayModel* dm = tab->AsFixed();
+    if (!dm || !dm->GetEngine()) {
+        MessageBoxA(nullptr, "Error: No document open or document type not supported", "Highlight Key Terms", MB_OK);
+        return;
+    }
+    
+    // Check if engine supports annotations
+    EngineBase* engine = dm->GetEngine();
+    if (!EngineSupportsAnnotations(engine)) {
+        MessageBoxA(nullptr, "Error: Document type does not support annotations", "Highlight Key Terms", MB_OK);
+        return;
+    }
+    
+    // Check if text search is available
+    if (!dm->textSearch) {
+        MessageBoxA(nullptr, "Error: Text search not available", "Highlight Key Terms", MB_OK);
+        return;
+    }
+    
+    // Get the search terms
+    const KeySearchTerm* terms = GetKeySearchTerms();
+    int termCount = GetKeySearchTermsCount();
+    
+    if (!terms || termCount == 0) {
+        MessageBoxA(nullptr, "Error: No search terms available", "Highlight Key Terms", MB_OK);
+        return;
+    }
+    
+    int totalAnnotations = 0;
+    int pageCount = dm->PageCount();
+    const int MAX_ANNOTATIONS = 50; // Conservative limit to prevent issues
+    
+    // Search through all pages for all terms
+    for (int pageNo = 1; pageNo <= pageCount && totalAnnotations < MAX_ANNOTATIONS; pageNo++) {
+        for (int termIdx = 0; termIdx < termCount && totalAnnotations < MAX_ANNOTATIONS; termIdx++) {
+            const KeySearchTerm& term = terms[termIdx];
+            if (!term.text) continue;
+            
+            // Convert to wide string for search
+            WCHAR* wideSearchTerm = ToWStr(term.text);
+            if (!wideSearchTerm) continue;
+            
+            // Reset search state and search for this term on this page
+            dm->textSearch->Reset();
+            dm->textSearch->SetSensitive(false);
+            
+            TextSel* result = dm->textSearch->FindFirst(pageNo, wideSearchTerm);
+            
+            // Process all instances of this term on this page
+            while (result && result->len > 0 && totalAnnotations < MAX_ANNOTATIONS) {
+                // Get text bounds from the search result
+                Vec<RectF> rects;
+                for (int i = 0; i < result->len; i++) {
+                    if (result->pages[i] == pageNo) {
+                        // Convert Rect to RectF manually
+                        Rect r = result->rects[i];
+                        RectF rf{(float)r.x, (float)r.y, (float)r.dx, (float)r.dy};
+                        rects.Append(rf);
+                    }
+                }
+                
+                if (rects.size() > 0) {
+                    // Create annotation args with term-specific color
+                    AnnotCreateArgs args{AnnotationType::Highlight};
+                    
+                    // Set color properly using ParsedColor structure
+                    args.col.wasParsed = true;
+                    args.col.parsedOk = true;
+                    args.col.col = term.color;  // COLORREF
+                    
+                    // Also set PDF color
+                    BYTE r = GetRValue(term.color);
+                    BYTE g = GetGValue(term.color);
+                    BYTE b = GetBValue(term.color);
+                    args.col.pdfCol = MkPdfColor(r, g, b, 255);
+                    
+                    // Create annotation using safe direct approach
+                    Annotation* annot = EngineMupdfCreateAnnotation(engine, pageNo, PointF{}, &args);
+                    if (annot) {
+                        // Set the highlight bounds
+                        SetQuadPointsAsRect(annot, rects);
+                        annot->bounds = GetBounds(annot);
+                        totalAnnotations++;
+                    }
+                }
+                
+                // Find next occurrence on this page
+                result = dm->textSearch->FindNext();
+                // Break if we moved to a different page
+                if (result && result->len > 0 && result->pages[0] != pageNo) {
+                    break;
+                }
+            }
+            
+            free(wideSearchTerm);
+        }
+    }
+    
+    // Clean up search state
+    dm->textSearch->Reset();
+    
+    // Update UI if annotations were created
+    if (totalAnnotations > 0) {
+        MainWindow* win = FindMainWindowByTab(tab);
+        if (win) {
+            MainWindowRerender(win);
+            ToolbarUpdateStateForWindow(win, true);
+        }
+    }
+    
+    // Show results
+    char resultMsg[200];
+    if (totalAnnotations >= MAX_ANNOTATIONS) {
+        sprintf_s(resultMsg, sizeof(resultMsg), "Created %d highlight annotations (limit reached)", totalAnnotations);
+    } else {
+        sprintf_s(resultMsg, sizeof(resultMsg), "Created %d highlight annotations for key terms", totalAnnotations);
+    }
+    MessageBoxA(nullptr, resultMsg, "Highlight Key Terms", MB_OK);
+}
+
 static void ToggleCursorPositionInDoc(MainWindow* win) {
     // "cursor position" tip: make figuring out the current
     // cursor position in cm/in/pt possible (for exact layouting)
@@ -5220,6 +5355,14 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
 
         case CmdShowInFolder:
             ShowCurrentFileInFolder(win);
+            break;
+
+        case CmdHighlightKeyTerms:
+            ShowLoadSearchTermsDialog(tab);
+            break;
+
+        case CmdReloadSearchTerms:
+            ReloadSearchTermsFromFile();
             break;
 
         case CmdOpenPrevFileInFolder:

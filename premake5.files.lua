@@ -649,6 +649,7 @@ function sumatrapdf_files()
     "HomePage.*",
     "Installer.*",
     "InstallerCommon.cpp",
+    "JsonSearchTerms.*",
     "MainWindow.*",
     "Menu.*",
     "Notifications.*",
