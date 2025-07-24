@@ -120,14 +120,6 @@ static MenuDef menuDefFile[] = {
         _TRN("Save Annotations to existing PDF"),
         CmdSaveAnnotations,
     },
-    {
-        _TRN("&Highlight Key Terms"),
-        CmdHighlightKeyTerms,
-    },
-    {
-        _TRN("&Reload Search Terms"),
-        CmdReloadSearchTerms,
-    },
 //[ ACCESSKEY_ALTERNATIVE // only one of these two will be shown
 #ifdef ENABLE_SAVE_SHORTCUT
     {
@@ -557,6 +549,23 @@ static MenuDef menuDefHelp[] = {
 };
 //] ACCESSKEY_GROUP Help Menu
 
+//[ ACCESSKEY_GROUP Special Menu
+static MenuDef menuDefSpecial[] = {
+    {
+        _TRN("&Highlight Key Terms"),
+        CmdHighlightKeyTerms,
+    },
+    {
+        _TRN("&Reload Search Terms"),
+        CmdReloadSearchTerms, 
+    },
+    {
+        nullptr,
+        0,
+    },
+};
+//] ACCESSKEY_GROUP Special Menu
+
 //[ ACCESSKEY_GROUP Debug Menu
 static MenuDef menuDefDebug[] = {
     {
@@ -689,6 +698,10 @@ static MenuDef menuDefMenubar[] = {
     {
         _TRN("&Settings"),
         (UINT_PTR)menuDefSettings,
+    },
+    {
+        _TRN("S&pecial"),
+        (UINT_PTR)menuDefSpecial,
     },
     {
         _TRN("&Help"),
