@@ -134,7 +134,7 @@ void ReloadSearchTermsFromFile() {
             int g = GetGValue(term.color);  
             int b = GetBValue(term.color);
             char termInfo[128];
-            sprintf_s(termInfo, sizeof(termInfo), "\n• %s (RGB %d,%d,%d)", term.text, r, g, b);
+            sprintf_s(termInfo, sizeof(termInfo), "\n- %s (RGB %d,%d,%d)", term.text, r, g, b);
             strcat_s(debugMsg, sizeof(debugMsg), termInfo);
         }
         if (gLoadedTerms.Size() > maxShow) {
@@ -197,7 +197,7 @@ void ShowLoadSearchTermsDialog(void* tabPtr) {
             int g = GetGValue(term.color);  
             int b = GetBValue(term.color);
             char termInfo[128];
-            sprintf_s(termInfo, sizeof(termInfo), "• %s (RGB %d,%d,%d)\n", term.text, r, g, b);
+            sprintf_s(termInfo, sizeof(termInfo), "- %s (RGB %d,%d,%d)\n", term.text, r, g, b);
             strcat_s(message, sizeof(message), termInfo);
         }
         if (gLoadedTerms.Size() > maxShow) {
@@ -211,8 +211,8 @@ void ShowLoadSearchTermsDialog(void* tabPtr) {
         // Fallback to static terms message
         strcpy_s(message, sizeof(message),
             "Auto-highlighting 6 static search terms:\n\n"
-            "• SCHWAB (yellow)\n• Chiller (orange)\n• Warranty (red)\n"
-            "• Safety (green)\n• Service (blue)\n• Motor (purple)\n\n"
+            "- SCHWAB (yellow)\n- Chiller (orange)\n- Warranty (red)\n"
+            "- Safety (green)\n- Service (blue)\n- Motor (purple)\n\n"
             "This will create persistent highlight annotations.\n\n"
             "Click OK to start highlighting.");
     }

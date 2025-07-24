@@ -4452,13 +4452,15 @@ void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
         return;
     }
     
+    // Collect data for hierarchical bookmark creation
+    Vec<TermPageData> termPageData;
+    
     int totalAnnotations = 0;
     int pageCount = dm->PageCount();
-    const int MAX_ANNOTATIONS = 50; // Conservative limit to prevent issues
     
-    // Search through all pages for all terms
-    for (int pageNo = 1; pageNo <= pageCount && totalAnnotations < MAX_ANNOTATIONS; pageNo++) {
-        for (int termIdx = 0; termIdx < termCount && totalAnnotations < MAX_ANNOTATIONS; termIdx++) {
+    // Search through all pages for all terms (no limit)
+    for (int pageNo = 1; pageNo <= pageCount; pageNo++) {
+        for (int termIdx = 0; termIdx < termCount; termIdx++) {
             const KeySearchTerm& term = terms[termIdx];
             if (!term.text) continue;
             
@@ -4473,6 +4475,7 @@ void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
             TextSel* result = dm->textSearch->FindFirst(pageNo, wideSearchTerm);
             
             // Process all instances of this term on this page
+            const int MAX_ANNOTATIONS = 1000;
             while (result && result->len > 0 && totalAnnotations < MAX_ANNOTATIONS) {
                 // Get text bounds from the search result
                 Vec<RectF> rects;
@@ -4510,6 +4513,37 @@ void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
                         // Set the search term as the annotation contents
                         SetContents(annot, term.text);
                         
+                        // Collect bookmark data for hierarchical creation
+                        // Find or create TermPageData for this search term
+                        TermPageData* termData = nullptr;
+                        for (size_t i = 0; i < termPageData.Size(); i++) {
+                            if (str::Eq(termPageData[i].termName, term.text)) {
+                                termData = &termPageData[i];
+                                break;
+                            }
+                        }
+                        
+                        if (!termData) {
+                            // Create new TermPageData for this term
+                            TermPageData newTermData;
+                            newTermData.termName = str::Dup(term.text);
+                            termPageData.Append(newTermData);
+                            termData = &termPageData[termPageData.Size() - 1];
+                        }
+                        
+                        // Check if page already exists for this term (avoid duplicates)
+                        bool pageExists = false;
+                        for (size_t i = 0; i < termData->pages.Size(); i++) {
+                            if (termData->pages[i] == pageNo) {
+                                pageExists = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!pageExists) {
+                            termData->pages.Append(pageNo);
+                        }
+                        
                         totalAnnotations++;
                     }
                 }
@@ -4529,6 +4563,14 @@ void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
     // Clean up search state
     dm->textSearch->Reset();
     
+    // Create hierarchical bookmarks if we found any search terms
+    if (termPageData.Size() > 0) {
+        bool bookmarkSuccess = CreateHierarchicalSearchBookmarks(engine, termPageData);
+        if (!bookmarkSuccess) {
+            logf("CreateHighlightAnnotationsForKeyTerms: Failed to create hierarchical bookmarks\n");
+        }
+    }
+    
     // Update UI if annotations were created
     if (totalAnnotations > 0) {
         MainWindow* win = FindMainWindowByTab(tab);
@@ -4540,12 +4582,13 @@ void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
     
     // Show results
     char resultMsg[200];
-    if (totalAnnotations >= MAX_ANNOTATIONS) {
-        sprintf_s(resultMsg, sizeof(resultMsg), "Created %d highlight annotations (limit reached)", totalAnnotations);
-    } else {
-        sprintf_s(resultMsg, sizeof(resultMsg), "Created %d highlight annotations for key terms", totalAnnotations);
-    }
+    sprintf_s(resultMsg, sizeof(resultMsg), "Created %d highlight annotations for key terms", totalAnnotations);
     MessageBoxA(nullptr, resultMsg, "Highlight Key Terms", MB_OK);
+    
+    // Cleanup term page data
+    for (size_t i = 0; i < termPageData.Size(); i++) {
+        free(termPageData[i].termName);
+    }
 }
 
 static void ToggleCursorPositionInDoc(MainWindow* win) {

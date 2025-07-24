@@ -58,6 +58,15 @@ bool EngineMupdfSupportsAnnotations(EngineBase*);
 bool EngineMupdfSaveUpdated(EngineBase* engine, const char* path, const ShowErrorCb& showErrorFunc);
 Annotation* EngineMupdfGetAnnotationAtPos(EngineBase*, int pageNo, PointF pos, Annotation*);
 ByteSlice EngineMupdfLoadAttachment(EngineBase*, int attachmentNo);
+bool AddSearchTermBookmark(EngineBase* engine, int pageNo, const char* searchTerm);
+
+// Structure for hierarchical bookmark creation
+struct TermPageData {
+    char* termName;
+    Vec<int> pages;
+};
+
+bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& termData);
 
 /* EnginePs.cpp */
 

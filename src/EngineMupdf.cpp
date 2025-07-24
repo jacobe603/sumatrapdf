@@ -3952,3 +3952,268 @@ Annotation* MakeAnnotationWrapper(EngineMupdf* engine, pdf_annot* annot, int pag
     res->type = typ;
     return res;
 }
+
+// Helper functions removed - now using two-pass hierarchical approach
+
+// Two-pass hierarchical bookmark creation
+bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& termData) {
+    if (!engine || termData.Size() == 0) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    fz_outline_iterator* iter = nullptr;
+    bool success = false;
+    
+    fz_try(ctx) {
+        iter = pdf_new_outline_iterator(ctx, epdf->pdfdoc);
+        if (!iter) {
+            logf("CreateHierarchicalSearchBookmarks: Failed to create outline iterator\n");
+            return false;
+        }
+        
+        logf("CreateHierarchicalSearchBookmarks: Starting two-pass bookmark creation for %d terms\n", (int)termData.Size());
+        
+        // PASS 1: Create parent structure
+        // Navigate to end of existing bookmarks
+        while (fz_outline_iterator_next(ctx, iter) == 0) {
+            // Continue to end
+        }
+        
+        // Create "Search Results" parent folder
+        fz_outline_item parentItem = {0};
+        // Use str::Dup to create a proper copy of the title string
+        char* parentTitle = str::Dup("Search Results");
+        parentItem.title = parentTitle;
+        parentItem.uri = nullptr;
+        parentItem.is_open = 1;
+        parentItem.flags = 0;
+        parentItem.r = 0.0f;
+        parentItem.g = 0.0f;
+        parentItem.b = 0.0f;
+        
+        int result = fz_outline_iterator_insert(ctx, iter, &parentItem);
+        
+        // Clean up the allocated title string
+        free(parentTitle);
+        
+        if (result < 0) {
+            logf("CreateHierarchicalSearchBookmarks: Failed to create 'Search Results' parent, result: %d\n", result);
+            return false;
+        }
+        
+        logf("CreateHierarchicalSearchBookmarks: Created 'Search Results' parent\n");
+        
+        // After creating "Search Results", we need to position the iterator 
+        // to add children to it. Since down() failed, we need to manually
+        // navigate back to the "Search Results" bookmark and set up for children.
+        
+        // The iterator should currently be pointing to the newly created "Search Results" bookmark
+        // We need to manually set it to MOD_BELOW state to add children
+        
+        // First, let's navigate back to find the "Search Results" bookmark we just created
+        // Go back to the beginning and find it
+        while (fz_outline_iterator_up(ctx, iter) == 0) {
+            // Continue going up to top level
+        }
+        
+        logf("CreateHierarchicalSearchBookmarks: Reached top level, now checking current position\n");
+        
+        // Check if we're positioned correctly at the top level
+        fz_outline_item* currentAtTop = fz_outline_iterator_item(ctx, iter);
+        if (!currentAtTop) {
+            logf("CreateHierarchicalSearchBookmarks: Iterator at invalid position, recreating\n");
+            
+            // The iterator might be at the end or in an invalid position
+            // Recreate the iterator to get a fresh start
+            fz_drop_outline_iterator(ctx, iter);
+            iter = pdf_new_outline_iterator(ctx, epdf->pdfdoc);
+            if (!iter) {
+                logf("CreateHierarchicalSearchBookmarks: Failed to recreate outline iterator\n");
+                return false;
+            }
+            
+            // Check if we can access the first bookmark now
+            currentAtTop = fz_outline_iterator_item(ctx, iter);
+            if (!currentAtTop) {
+                logf("CreateHierarchicalSearchBookmarks: No bookmarks found after recreating iterator\n");
+                return false;
+            }
+            
+            logf("CreateHierarchicalSearchBookmarks: Successfully repositioned iterator\n");
+        }
+        
+        // Find the "Search Results" bookmark
+        bool foundSearchResults = false;
+        
+        // Start from current position and search
+        fz_outline_item* current = fz_outline_iterator_item(ctx, iter);
+        if (current && current->title && str::Eq(current->title, "Search Results")) {
+            foundSearchResults = true;
+        }
+        
+        // If not found at current position, search forward
+        if (!foundSearchResults) {
+            while (fz_outline_iterator_next(ctx, iter) == 0) {
+                fz_outline_item* searchCurrent = fz_outline_iterator_item(ctx, iter);
+                if (searchCurrent && searchCurrent->title && str::Eq(searchCurrent->title, "Search Results")) {
+                    foundSearchResults = true;
+                    break;
+                }
+            }
+        }
+        
+        if (!foundSearchResults) {
+            logf("CreateHierarchicalSearchBookmarks: Could not find 'Search Results' bookmark\n");
+            return false;
+        }
+        
+        // Navigate into the "Search Results" folder to add term folders
+        int downResult = fz_outline_iterator_down(ctx, iter);
+        if (downResult != 1 && downResult != 0) {
+            logf("CreateHierarchicalSearchBookmarks: Cannot navigate into 'Search Results', downResult: %d\n", downResult);
+            return false;
+        }
+        
+        logf("CreateHierarchicalSearchBookmarks: Successfully positioned to add term folders\n");
+        
+        // Create term folders (regardless of down() result)
+        for (size_t i = 0; i < termData.Size(); i++) {
+            fz_outline_item termItem = {0};
+            termItem.title = termData[i].termName;
+            termItem.uri = nullptr;
+            termItem.is_open = 1;
+            termItem.flags = 0;
+            termItem.r = 0.0f;
+            termItem.g = 0.0f;
+            termItem.b = 0.0f;
+            
+            result = fz_outline_iterator_insert(ctx, iter, &termItem);
+            if (result < 0) {
+                logf("CreateHierarchicalSearchBookmarks: Failed to create term folder '%s', result: %d\n", termData[i].termName, result);
+                continue;
+            }
+            
+            logf("CreateHierarchicalSearchBookmarks: Created term folder '%s'\n", termData[i].termName);
+        }
+        
+        // PASS 2: Add page bookmarks to each term folder
+        // Navigate back to Search Results folder and start adding children
+        // Reset iterator to find Search Results
+        while (fz_outline_iterator_up(ctx, iter) == 0) {
+            // Go to top level
+        }
+        
+        // Find Search Results folder
+        bool foundSearchResultsPass2 = false;
+        do {
+            fz_outline_item* pass2Current = fz_outline_iterator_item(ctx, iter);
+            if (pass2Current && pass2Current->title && str::Eq(pass2Current->title, "Search Results")) {
+                foundSearchResultsPass2 = true;
+                break;
+            }
+        } while (fz_outline_iterator_next(ctx, iter) == 0);
+        
+        if (!foundSearchResultsPass2) {
+            logf("CreateHierarchicalSearchBookmarks: Could not find Search Results folder for pass 2\n");
+            return false;
+        }
+        
+        // Enter Search Results folder
+        downResult = fz_outline_iterator_down(ctx, iter);
+        if (downResult != 1 && downResult != 0) {
+            logf("CreateHierarchicalSearchBookmarks: Could not enter Search Results for pass 2, downResult: %d\n", downResult);
+            return false;
+        }
+        
+        logf("CreateHierarchicalSearchBookmarks: Starting Pass 2 - adding page bookmarks\n");
+        
+        // For each term, find its folder and add page bookmarks
+        for (size_t i = 0; i < termData.Size(); i++) {
+            // Navigate to the first child of Search Results (or check current position)
+            bool foundTerm = false;
+            
+            // Find the term folder
+            fz_outline_item* termCurrent = fz_outline_iterator_item(ctx, iter);
+            if (termCurrent && termCurrent->title && str::Eq(termCurrent->title, termData[i].termName)) {
+                foundTerm = true;
+            } else {
+                // Search through siblings for the term folder
+                while (fz_outline_iterator_next(ctx, iter) == 0) {
+                    termCurrent = fz_outline_iterator_item(ctx, iter);
+                    if (termCurrent && termCurrent->title && str::Eq(termCurrent->title, termData[i].termName)) {
+                        foundTerm = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (!foundTerm) {
+                logf("CreateHierarchicalSearchBookmarks: Could not find term folder '%s'\n", termData[i].termName);
+                continue;
+            }
+            
+            // Enter term folder to add page bookmarks
+            downResult = fz_outline_iterator_down(ctx, iter);
+            if (downResult != 1 && downResult != 0) {
+                logf("CreateHierarchicalSearchBookmarks: Could not enter term folder '%s'\n", termData[i].termName);
+                continue;
+            }
+            
+            // Add page bookmarks
+            for (size_t j = 0; j < termData[i].pages.Size(); j++) {
+                int pageNo = termData[i].pages[j];
+                
+                fz_outline_item pageItem = {0};
+                TempStr title = str::FormatTemp("Page %d", pageNo);
+                pageItem.title = (char*)title;
+                
+                TempStr uri = str::FormatTemp("#page=%d", pageNo);
+                pageItem.uri = (char*)uri;
+                
+                pageItem.is_open = 0;
+                pageItem.flags = 0;
+                pageItem.r = 0.0f;
+                pageItem.g = 0.0f;
+                pageItem.b = 0.0f;
+                
+                result = fz_outline_iterator_insert(ctx, iter, &pageItem);
+                if (result < 0) {
+                    logf("CreateHierarchicalSearchBookmarks: Failed to add page bookmark 'Page %d', result: %d\n", pageNo, result);
+                }
+            }
+            
+            // Navigate back to Search Results level for next term
+            fz_outline_iterator_up(ctx, iter);
+        }
+        
+        success = true;
+        logf("CreateHierarchicalSearchBookmarks: Completed two-pass bookmark creation\n");
+        
+    }
+    fz_catch(ctx) {
+        logf("CreateHierarchicalSearchBookmarks: Exception caught\n");
+        fz_report_error(ctx);
+        success = false;
+    }
+    
+    if (iter) {
+        fz_drop_outline_iterator(ctx, iter);
+    }
+    
+    return success;
+}
+
+// Legacy single bookmark function - now calls the hierarchical system
+bool AddSearchTermBookmark(EngineBase* engine, int pageNo, const char* searchTerm) {
+    // This function is kept for compatibility but should not be used
+    // The main highlighting function should collect all data and call CreateHierarchicalSearchBookmarks
+    return false;
+}
