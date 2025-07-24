@@ -194,6 +194,7 @@ Cmd* enum (e.g. CmdOpen) and a human-readable name (not used yet).
     V(CmdHighlightKeyTerms, "Highlight Key Terms")                               \
     V(CmdReloadSearchTerms, "Reload Search Terms")                               \
     V(CmdDeleteAllBookmarks, "Delete All Bookmarks")                             \
+    V(CmdDeleteAllHighlights, "Delete All Highlights")                           \
     V(CmdNone, "Do nothing")
 
 // order of CreateAnnot* must be the same as enum AnnotationType

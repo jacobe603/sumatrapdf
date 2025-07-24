@@ -568,6 +568,10 @@ static MenuDef menuDefSpecial[] = {
         CmdDeleteAllBookmarks,
     },
     {
+        _TRN("Delete All &Highlights"),
+        CmdDeleteAllHighlights,
+    },
+    {
         nullptr,
         0,
     },

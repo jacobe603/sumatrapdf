@@ -4259,6 +4259,69 @@ bool DeleteAllBookmarks(EngineBase* engine) {
     return success;
 }
 
+// Delete all highlight annotations from the PDF document
+bool DeleteAllHighlights(EngineBase* engine) {
+    if (!engine) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    int deletedCount = 0;
+    bool success = false;
+    
+    fz_try(ctx) {
+        // Begin operation for proper transaction handling
+        pdf_begin_operation(ctx, epdf->pdfdoc, "Delete all highlights");
+        
+        int pageCount = pdf_count_pages(ctx, epdf->pdfdoc);
+        logf("DeleteAllHighlights: Processing %d pages\n", pageCount);
+        
+        // Iterate through all pages
+        for (int pageNo = 1; pageNo <= pageCount; pageNo++) {
+            pdf_page* page = pdf_load_page(ctx, epdf->pdfdoc, pageNo - 1);
+            
+            // Collect highlight annotations to delete (to avoid iterator invalidation)
+            Vec<pdf_annot*> toDelete;
+            pdf_annot* annot;
+            for (annot = pdf_first_annot(ctx, page); annot; annot = pdf_next_annot(ctx, annot)) {
+                if (pdf_annot_type(ctx, annot) == PDF_ANNOT_HIGHLIGHT) {
+                    toDelete.Append(annot);
+                }
+            }
+            
+            // Delete collected highlights
+            for (pdf_annot* highlight : toDelete) {
+                pdf_delete_annot(ctx, page, highlight);
+                deletedCount++;
+            }
+            
+            if (toDelete.Size() > 0) {
+                logf("DeleteAllHighlights: Deleted %d highlights from page %d\n", 
+                     (int)toDelete.Size(), pageNo);
+            }
+        }
+        
+        pdf_end_operation(ctx, epdf->pdfdoc);
+        logf("DeleteAllHighlights: Successfully deleted %d total highlights\n", deletedCount);
+        success = true;
+    }
+    fz_catch(ctx) {
+        logf("DeleteAllHighlights: Exception caught during deletion\n");
+        pdf_abandon_operation(ctx, epdf->pdfdoc);
+        fz_report_error(ctx);
+        success = false;
+    }
+    
+    return success && (deletedCount > 0);
+}
+
 // Legacy single bookmark function - now calls the hierarchical system
 bool AddSearchTermBookmark(EngineBase* engine, int pageNo, const char* searchTerm) {
     // This function is kept for compatibility but should not be used
