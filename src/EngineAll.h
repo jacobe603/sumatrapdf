@@ -69,6 +69,7 @@ struct TermPageData {
 bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& termData);
 bool DeleteAllBookmarks(EngineBase* engine);
 bool DeleteAllHighlights(EngineBase* engine);
+void RefreshTocForEngine(EngineBase* engine);
 
 /* EnginePs.cpp */
 

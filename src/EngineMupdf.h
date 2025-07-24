@@ -114,6 +114,10 @@ class EngineMupdf : public EngineBase {
     TocItem* BuildTocTree(TocItem* parent, fz_outline* outline, int& idCounter, bool isAttachment);
     TempStr ExtractFontListTemp();
 
+    // TOC cache management methods
+    void InvalidateTocCache();
+    void RefreshToc();
+
     ByteSlice LoadStreamFromPDFFile(const char* filePath);
 };
 

@@ -4577,6 +4577,13 @@ void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
         if (win) {
             MainWindowRerender(win);
             ToolbarUpdateStateForWindow(win, true);
+            
+            // Refresh TOC display if visible (bookmarks may have been added)
+            if (win->tocVisible) {
+                ClearTocBox(win);
+                LoadTocTree(win);
+                logf("CreateHighlightAnnotationsForKeyTerms: Refreshed TOC display\n");
+            }
         }
     }
     
@@ -5430,6 +5437,13 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
                     // Update UI
                     MainWindowRerender(win);
                     ToolbarUpdateStateForWindow(win, true);
+                    
+                    // Refresh TOC display if visible (bookmarks were deleted)
+                    if (win->tocVisible) {
+                        ClearTocBox(win);
+                        LoadTocTree(win);
+                        logf("DeleteAllBookmarks: Refreshed TOC display\n");
+                    }
                     
                     // Show success message
                     MessageBoxA(win->hwndFrame, 

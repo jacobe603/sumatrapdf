@@ -2496,6 +2496,55 @@ MakeTree:
     return tocTree;
 }
 
+// Invalidate the cached TOC tree to force reload from PDF
+void EngineMupdf::InvalidateTocCache() {
+    ScopedCritSec cs(ctxAccess);
+    
+    // Free cached TOC tree
+    if (tocTree) {
+        delete tocTree;
+        tocTree = nullptr;
+    }
+    
+    // Free cached outline data - will be reloaded from PDF
+    if (outline) {
+        fz_drop_outline(Ctx(), outline);
+        outline = nullptr;
+    }
+    
+    logf("InvalidateTocCache: TOC cache cleared\n");
+}
+
+// Refresh the TOC by reloading outline data from PDF and rebuilding cache
+void EngineMupdf::RefreshToc() {
+    ScopedCritSec cs(ctxAccess);
+    
+    // First invalidate existing cache
+    if (tocTree) {
+        delete tocTree;
+        tocTree = nullptr;
+    }
+    
+    if (outline) {
+        fz_drop_outline(Ctx(), outline);
+        outline = nullptr;
+    }
+    
+    // Reload outline from PDF document
+    fz_context* ctx = Ctx();
+    fz_try(ctx) {
+        outline = fz_load_outline(ctx, _doc);
+        logf("RefreshToc: Reloaded outline from PDF document\n");
+    }
+    fz_catch(ctx) {
+        logf("RefreshToc: Failed to reload outline from PDF\n");
+        fz_report_error(ctx);
+        outline = nullptr;
+    }
+    
+    // TOC tree will be rebuilt on next GetToc() call
+}
+
 IPageDestination* EngineMupdf::GetNamedDest(const char* name) {
     if (!pdfdoc) {
         return nullptr;
@@ -4208,6 +4257,12 @@ bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& te
         fz_drop_outline_iterator(ctx, iter);
     }
     
+    // Refresh TOC cache if bookmarks were successfully created
+    if (success) {
+        epdf->RefreshToc();
+        logf("CreateHierarchicalSearchBookmarks: Refreshed TOC cache after adding bookmarks\n");
+    }
+    
     return success;
 }
 
@@ -4254,6 +4309,12 @@ bool DeleteAllBookmarks(EngineBase* engine) {
         pdf_abandon_operation(ctx, epdf->pdfdoc);
         fz_report_error(ctx);
         success = false;
+    }
+    
+    // Refresh TOC cache if bookmarks were successfully deleted
+    if (success) {
+        epdf->RefreshToc();
+        logf("DeleteAllBookmarks: Refreshed TOC cache after deleting bookmarks\n");
     }
     
     return success;
@@ -4327,4 +4388,21 @@ bool AddSearchTermBookmark(EngineBase* engine, int pageNo, const char* searchTer
     // This function is kept for compatibility but should not be used
     // The main highlighting function should collect all data and call CreateHierarchicalSearchBookmarks
     return false;
+}
+
+// Public interface to refresh TOC for any engine type
+void RefreshTocForEngine(EngineBase* engine) {
+    if (!engine) {
+        return;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (epdf) {
+        epdf->RefreshToc();
+        logf("RefreshTocForEngine: Refreshed TOC cache for MuPDF engine\n");
+    } else {
+        // For non-MuPDF engines, there might not be TOC caching issues
+        // but we can add support for other engines here if needed
+        logf("RefreshTocForEngine: Engine type does not support TOC refresh\n");
+    }
 }
