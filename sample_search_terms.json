@@ -1,0 +1,34 @@
+{
+  "searchTerms": [
+    {
+      "term": "important",
+      "color": "#FFFF00",
+      "caseSensitive": false,
+      "wholeWordsOnly": true
+    },
+    {
+      "term": "TODO",
+      "color": "#FF0000",
+      "caseSensitive": true,
+      "wholeWordsOnly": false
+    },
+    {
+      "term": "critical",
+      "color": "#FF8000",
+      "caseSensitive": false,
+      "wholeWordsOnly": true
+    },
+    {
+      "term": "error",
+      "color": "#FF4444",
+      "caseSensitive": false,
+      "wholeWordsOnly": false
+    },
+    {
+      "term": "warning",
+      "color": "#FFAA00",
+      "caseSensitive": false,
+      "wholeWordsOnly": false
+    }
+  ]
+}

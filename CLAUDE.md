@@ -330,5 +330,11 @@ files_in_dir("src", {
 4. Test thoroughly before submitting pull requests
 5. Discuss significant changes in the issue tracker first
 
+## Development Notes
+
+### Build Workflow
+
+- **User is to use VS 2022 to manually build the code**
+
 For more detailed information, see the official documentation at:
 https://www.sumatrapdfreader.org/docs/Contribute-to-SumatraPDF

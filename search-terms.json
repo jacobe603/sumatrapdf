@@ -1,0 +1,24 @@
+{
+  "searchTerms": [
+    {
+      "term": "TEST",
+      "color": "#FF0000"
+    },
+    {
+      "term": "SCHWAB",
+      "color": "#FFFF00"
+    },
+    {
+      "term": "Chiller",
+      "color": "#FFA500"
+    },
+    {
+      "term": "Warranty",
+      "color": "#FF0000"
+    },
+    {
+      "term": "Safety",
+      "color": "#00FF00"
+    }
+  ]
+}

@@ -4506,6 +4506,10 @@ void CreateHighlightAnnotationsForKeyTerms(void* tabPtr) {
                         // Set the highlight bounds
                         SetQuadPointsAsRect(annot, rects);
                         annot->bounds = GetBounds(annot);
+                        
+                        // Set the search term as the annotation contents
+                        SetContents(annot, term.text);
+                        
                         totalAnnotations++;
                     }
                 }
