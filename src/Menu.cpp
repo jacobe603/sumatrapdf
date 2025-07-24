@@ -560,6 +560,14 @@ static MenuDef menuDefSpecial[] = {
         CmdReloadSearchTerms, 
     },
     {
+        kMenuSeparator,
+        0,
+    },
+    {
+        _TRN("&Delete All Bookmarks"),
+        CmdDeleteAllBookmarks,
+    },
+    {
         nullptr,
         0,
     },

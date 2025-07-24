@@ -193,6 +193,7 @@ Cmd* enum (e.g. CmdOpen) and a human-readable name (not used yet).
     V(CmdDebugDelayCloseWindow, "Debug: Delay Close Window")                       \
     V(CmdHighlightKeyTerms, "Highlight Key Terms")                               \
     V(CmdReloadSearchTerms, "Reload Search Terms")                               \
+    V(CmdDeleteAllBookmarks, "Delete All Bookmarks")                             \
     V(CmdNone, "Do nothing")
 
 // order of CreateAnnot* must be the same as enum AnnotationType

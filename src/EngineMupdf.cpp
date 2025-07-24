@@ -4211,6 +4211,54 @@ bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& te
     return success;
 }
 
+// Delete all bookmarks/outlines from the PDF document
+bool DeleteAllBookmarks(EngineBase* engine) {
+    if (!engine) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    bool success = false;
+    
+    fz_try(ctx) {
+        // Begin operation for proper transaction handling
+        pdf_begin_operation(ctx, epdf->pdfdoc, "Delete all bookmarks");
+        
+        // Get PDF document root
+        pdf_obj* root = pdf_dict_get(ctx, pdf_trailer(ctx, epdf->pdfdoc), PDF_NAME(Root));
+        if (root) {
+            // Check if Outlines entry exists
+            pdf_obj* outlines = pdf_dict_get(ctx, root, PDF_NAME(Outlines));
+            if (outlines) {
+                // Simply delete the entire Outlines entry
+                pdf_dict_del(ctx, root, PDF_NAME(Outlines));
+                logf("DeleteAllBookmarks: Successfully deleted all bookmarks\n");
+                success = true;
+            } else {
+                logf("DeleteAllBookmarks: No bookmarks found to delete\n");
+                success = true; // No bookmarks to delete is still "success"
+            }
+        }
+        
+        pdf_end_operation(ctx, epdf->pdfdoc);
+    }
+    fz_catch(ctx) {
+        logf("DeleteAllBookmarks: Exception caught during deletion\n");
+        pdf_abandon_operation(ctx, epdf->pdfdoc);
+        fz_report_error(ctx);
+        success = false;
+    }
+    
+    return success;
+}
+
 // Legacy single bookmark function - now calls the hierarchical system
 bool AddSearchTermBookmark(EngineBase* engine, int pageNo, const char* searchTerm) {
     // This function is kept for compatibility but should not be used

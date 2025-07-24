@@ -5412,6 +5412,38 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
             ReloadSearchTermsFromFile();
             break;
 
+        case CmdDeleteAllBookmarks: {
+            if (!win->IsDocLoaded()) {
+                break;
+            }
+            
+            // Show confirmation dialog
+            int result = MessageBoxA(win->hwndFrame, 
+                "Are you sure you want to delete all bookmarks from this document?\n\n"
+                "This action cannot be undone and will remove all existing bookmarks.",
+                "Delete All Bookmarks", 
+                MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+            
+            if (result == IDYES) {
+                EngineBase* engine = tab->GetEngine();
+                if (DeleteAllBookmarks(engine)) {
+                    // Update UI
+                    MainWindowRerender(win);
+                    ToolbarUpdateStateForWindow(win, true);
+                    
+                    // Show success message
+                    MessageBoxA(win->hwndFrame, 
+                               "All bookmarks have been deleted from the document.", 
+                               "Bookmarks Deleted", MB_OK | MB_ICONINFORMATION);
+                } else {
+                    MessageBoxA(win->hwndFrame, 
+                               "Failed to delete bookmarks. The document may not support this operation.", 
+                               "Error", MB_OK | MB_ICONERROR);
+                }
+            }
+            break;
+        }
+
         case CmdOpenPrevFileInFolder:
         case CmdOpenNextFileInFolder:
             if (!win->IsCurrentTabAbout()) {
