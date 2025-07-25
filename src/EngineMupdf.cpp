@@ -4406,3 +4406,85 @@ void RefreshTocForEngine(EngineBase* engine) {
         logf("RefreshTocForEngine: Engine type does not support TOC refresh\n");
     }
 }
+
+// Extract specified pages from a PDF document to a new PDF file
+bool ExtractPagesToNewPDF(EngineBase* engine, Vec<int>& pageNumbers, const char* outputPath) {
+    if (!engine || pageNumbers.Size() == 0 || !outputPath) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    bool success = false;
+    pdf_document* newDoc = nullptr;
+    
+    fz_try(ctx) {
+        // Create a new PDF document
+        newDoc = pdf_create_document(ctx);
+        if (!newDoc) {
+            logf("ExtractPagesToNewPDF: Failed to create new PDF document\n");
+            return false;
+        }
+        
+        logf("ExtractPagesToNewPDF: Created new PDF document, extracting %d pages\n", (int)pageNumbers.Size());
+        
+        // Extract each page in the specified order
+        for (size_t i = 0; i < pageNumbers.Size(); i++) {
+            int pageNo = pageNumbers[i];
+            
+            // Validate page number (1-based)
+            if (pageNo < 1 || pageNo > pdf_count_pages(ctx, epdf->pdfdoc)) {
+                logf("ExtractPagesToNewPDF: Invalid page number %d\n", pageNo);
+                continue;
+            }
+            
+            // Load the source page (convert to 0-based)
+            pdf_page* srcPage = pdf_load_page(ctx, epdf->pdfdoc, pageNo - 1);
+            if (!srcPage) {
+                logf("ExtractPagesToNewPDF: Failed to load source page %d\n", pageNo);
+                continue;
+            }
+            
+            // Get the page object from source document
+            pdf_obj* srcPageObj = pdf_page_obj(ctx, srcPage);
+            if (!srcPageObj) {
+                logf("ExtractPagesToNewPDF: Failed to get page object for page %d\n", pageNo);
+                fz_drop_page(ctx, (fz_page*)srcPage);
+                continue;
+            }
+            
+            // Insert the page into the new document
+            // pdf_insert_page inserts at the end when pageNum = -1
+            pdf_insert_page(ctx, newDoc, -1, srcPageObj);
+            
+            logf("ExtractPagesToNewPDF: Successfully copied page %d\n", pageNo);
+            
+            // Clean up the source page
+            fz_drop_page(ctx, (fz_page*)srcPage);
+        }
+        
+        // Save the new document
+        pdf_save_document(ctx, newDoc, outputPath, nullptr);
+        logf("ExtractPagesToNewPDF: Successfully saved extracted PDF to %s\n", outputPath);
+        
+        success = true;
+    }
+    fz_catch(ctx) {
+        logf("ExtractPagesToNewPDF: Exception caught during page extraction\n");
+        fz_report_error(ctx);
+        success = false;
+    }
+    
+    // Clean up the new document
+    if (newDoc) {
+        pdf_drop_document(ctx, newDoc);
+    }
+    
+    return success;
+}

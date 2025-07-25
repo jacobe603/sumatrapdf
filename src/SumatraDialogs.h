@@ -12,6 +12,10 @@ bool Dialog_CustomZoom(HWND hwnd, bool forChm, float* currZoomInOut);
 INT_PTR Dialog_Settings(HWND hwnd, GlobalPrefs* prefs);
 bool Dialog_AddFavorite(HWND hwnd, const char* pageNo, AutoFreeStr& favName);
 
+// Page extraction dialog and utilities
+Vec<int>* ParsePageRanges(const char* input, int totalPages);
+char* Dialog_ExtractPages(HWND hwnd, int pageCount, int currentPage);
+
 enum class PrintRangeAdv { All = 0, Even, Odd };
 enum class PrintScaleAdv { None = 0, Shrink, Fit };
 enum class PrintRotationAdv { Auto = 0, Portrait, Landscape };

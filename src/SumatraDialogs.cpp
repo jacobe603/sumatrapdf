@@ -1064,3 +1064,188 @@ bool Dialog_AddFavorite(HWND hwnd, const char* pageNo, AutoFreeStr& favName) {
     favName.SetCopy(data.favName);
     return true;
 }
+
+// Data structure for page extraction dialog
+struct Dialog_ExtractPages_Data {
+    int pageCount;
+    int currentPage;
+    char* pageRanges = nullptr;
+    
+    ~Dialog_ExtractPages_Data() {
+        str::Free(pageRanges);
+    }
+};
+
+// Dialog procedure for page extraction dialog
+static INT_PTR CALLBACK Dialog_ExtractPages_Proc(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp) {
+    Dialog_ExtractPages_Data* data;
+
+    switch (msg) {
+        case WM_INITDIALOG:
+            data = (Dialog_ExtractPages_Data*)lp;
+            SetWindowLongPtr(hDlg, GWLP_USERDATA, (LONG_PTR)data);
+            if (gUseDarkModeLib) {
+                DarkMode::setDarkWndSafe(hDlg);
+            }
+
+            // Set window title
+            HwndSetText(hDlg, _TRA("Extract Pages"));
+
+            // Set up the page count label
+            TempStr totalPagesLabel = str::FormatTemp(_TRA("(of %d pages)"), data->pageCount);
+            HwndSetDlgItemText(hDlg, IDC_EXTRACT_PAGES_TOTAL, totalPagesLabel);
+
+            // Set default page ranges (current page)
+            TempStr defaultRange = str::FormatTemp("%d", data->currentPage);
+            HwndSetDlgItemText(hDlg, IDC_EXTRACT_PAGES_EDIT, defaultRange);
+
+            // Set labels
+            HwndSetDlgItemText(hDlg, IDC_EXTRACT_PAGES_LABEL, _TRA("&Pages to extract:"));
+            HwndSetDlgItemText(hDlg, IDC_EXTRACT_PAGES_HELP, _TRA("Examples: 1,3,5-10  or  2-5,8,12-15"));
+            HwndSetDlgItemText(hDlg, IDOK, _TRA("Extract"));
+            HwndSetDlgItemText(hDlg, IDCANCEL, _TRA("Cancel"));
+
+            // Focus on the edit field and select all text
+            HWND editCtrl = GetDlgItem(hDlg, IDC_EXTRACT_PAGES_EDIT);
+            EditSelectAll(editCtrl);
+            CenterDialog(hDlg);
+            HwndSetFocus(editCtrl);
+            return FALSE;
+
+        case WM_COMMAND:
+            data = (Dialog_ExtractPages_Data*)GetWindowLongPtr(hDlg, GWLP_USERDATA);
+            
+            switch (LOWORD(wp)) {
+                case IDOK: {
+                    // Get the page ranges from the edit control
+                    AutoFreeWStr rangesW = HwndGetDlgItemText(hDlg, IDC_EXTRACT_PAGES_EDIT);
+                    AutoFreeStr ranges = ToUtf8Temp(rangesW);
+                    
+                    // Validate the page ranges
+                    Vec<int>* pageList = ParsePageRanges(ranges, data->pageCount);
+                    if (!pageList) {
+                        // Show error message for invalid input
+                        MessageBoxA(hDlg, 
+                                   _TRA("Invalid page range format. Please use format like: 1,3,5-10"),
+                                   _TRA("Invalid Input"), 
+                                   MB_OK | MB_ICONWARNING);
+                        return TRUE;
+                    }
+                    
+                    // Save the valid page ranges
+                    data->pageRanges = str::Dup(ranges);
+                    delete pageList;  // We don't need the parsed list here, just validation
+                    
+                    EndDialog(hDlg, IDOK);
+                    return TRUE;
+                }
+                
+                case IDCANCEL:
+                    EndDialog(hDlg, IDCANCEL);
+                    return TRUE;
+                    
+                case IDC_EXTRACT_PAGES_EDIT:
+                    if (HIWORD(wp) == EN_CHANGE) {
+                        // Could add real-time validation here if desired
+                        return TRUE;
+                    }
+                    break;
+            }
+            break;
+    }
+    
+    return FALSE;
+}
+
+// Main dialog function for page extraction
+char* Dialog_ExtractPages(HWND hwnd, int pageCount, int currentPage) {
+    Dialog_ExtractPages_Data data;
+    data.pageCount = pageCount;
+    data.currentPage = currentPage;
+    
+    INT_PTR res = CreateDialogBox(IDD_DIALOG_EXTRACT_PAGES, hwnd, Dialog_ExtractPages_Proc, (LPARAM)&data);
+    if (res != IDOK) {
+        return nullptr;
+    }
+    
+    return data.pageRanges;  // Ownership transferred to caller
+}
+
+// Parse page range input like "1,3-5,10-12" into a list of individual page numbers
+// Returns nullptr if parsing fails, otherwise returns a sorted, deduplicated list of valid pages
+Vec<int>* ParsePageRanges(const char* input, int totalPages) {
+    if (!input || !*input || totalPages <= 0) {
+        return nullptr;
+    }
+    
+    auto* pages = new Vec<int>();
+    
+    // Create a copy of input for tokenization
+    AutoFreeStr inputCopy = str::Dup(input);
+    
+    // Split by commas and process each part
+    StrVec parts;
+    str::Split(inputCopy, ",", parts);
+    
+    for (size_t i = 0; i < parts.Size(); i++) {
+        char* part = str::TrimWS(parts[i]);
+        if (!part || !*part) {
+            continue;
+        }
+        
+        // Check if it's a range (contains '-')
+        char* dash = str::FindChar(part, '-');
+        if (dash) {
+            // It's a range like "3-7"
+            *dash = '\0';  // Split at the dash
+            char* startStr = str::TrimWS(part);
+            char* endStr = str::TrimWS(dash + 1);
+            
+            int start = atoi(startStr);
+            int end = atoi(endStr);
+            
+            // Validate range
+            if (start <= 0 || end <= 0 || start > totalPages || end > totalPages || start > end) {
+                // Invalid range
+                delete pages;
+                return nullptr;
+            }
+            
+            // Add all pages in range
+            for (int pageNo = start; pageNo <= end; pageNo++) {
+                pages->Append(pageNo);
+            }
+        } else {
+            // It's a single page number
+            int pageNo = atoi(part);
+            if (pageNo <= 0 || pageNo > totalPages) {
+                // Invalid page number
+                delete pages;
+                return nullptr;
+            }
+            pages->Append(pageNo);
+        }
+    }
+    
+    if (pages->Size() == 0) {
+        delete pages;
+        return nullptr;
+    }
+    
+    // Sort and remove duplicates
+    pages->Sort();
+    
+    // Remove duplicates by creating a new vector
+    auto* uniquePages = new Vec<int>();
+    int lastPage = -1;
+    for (size_t i = 0; i < pages->Size(); i++) {
+        int currentPage = pages->At(i);
+        if (currentPage != lastPage) {
+            uniquePages->Append(currentPage);
+            lastPage = currentPage;
+        }
+    }
+    
+    delete pages;
+    return uniquePages;
+}

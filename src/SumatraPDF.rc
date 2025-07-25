@@ -216,6 +216,19 @@ BEGIN
     EDITTEXT        IDC_FAV_NAME_EDIT,7,20,222,14,ES_AUTOHSCROLL
 END
 
+IDD_DIALOG_EXTRACT_PAGES DIALOGEX 0, 0, 280, 75
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Extract Pages"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&Pages to extract:",IDC_EXTRACT_PAGES_LABEL,7,8,70,9
+    EDITTEXT        IDC_EXTRACT_PAGES_EDIT,80,6,120,13,ES_AUTOHSCROLL
+    LTEXT           "(of 9999 pages)",IDC_EXTRACT_PAGES_TOTAL,205,8,70,9
+    LTEXT           "Examples: 1,3,5-10  or  2-5,8,12-15",IDC_EXTRACT_PAGES_HELP,7,25,200,9
+    DEFPUSHBUTTON   "OK",IDOK,167,54,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,223,54,50,14
+END
+
 /////////////////////////////////////////////////////////////////////////////
 
 1                       RT_MANIFEST          "SumatraPDF.exe.manifest"
@@ -285,6 +298,14 @@ BEGIN
         RIGHTMARGIN, 229
         TOPMARGIN, 7
         BOTTOMMARGIN, 64
+    END
+
+    IDD_DIALOG_EXTRACT_PAGES, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 273
+        TOPMARGIN, 6
+        BOTTOMMARGIN, 68
     END
 END
 #endif    // APSTUDIO_INVOKED

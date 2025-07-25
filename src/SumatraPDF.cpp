@@ -5490,6 +5490,98 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
             break;
         }
 
+        case CmdExtractPages: {
+            if (!win->IsDocLoaded()) {
+                break;
+            }
+            
+            WindowTab* tab = win->CurrentTab();
+            if (!tab) {
+                break;
+            }
+            
+            EngineBase* engine = tab->GetEngine();
+            if (!engine) {
+                break;
+            }
+            
+            // Only support PDF documents for now
+            if (!AsEngineMupdf(engine)) {
+                MessageBoxA(win->hwndFrame,
+                           "Page extraction is currently only supported for PDF documents.",
+                           "Extract Pages", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            
+            int pageCount = engine->PageCount();
+            int currentPage = win->currPageNo;
+            
+            // Show the page extraction dialog
+            AutoFreeStr pageRanges = Dialog_ExtractPages(win->hwndFrame, pageCount, currentPage);
+            if (!pageRanges) {
+                // User cancelled
+                break;
+            }
+            
+            // Parse the page ranges
+            Vec<int>* pages = ParsePageRanges(pageRanges, pageCount);
+            if (!pages) {
+                MessageBoxA(win->hwndFrame,
+                           "Invalid page range format. Please check your input.",
+                           "Extract Pages", MB_OK | MB_ICONWARNING);
+                break;
+            }
+            
+            // Generate default filename
+            TempStr srcFileName = (TempStr)engine->FilePath();
+            TempStr baseName = path::GetBaseNameTemp(srcFileName);
+            TempStr nameWithoutExt = str::DupTemp(baseName);
+            char* ext = str::FindCharLast(nameWithoutExt, '.');
+            if (ext) {
+                *ext = '\0';  // Remove extension
+            }
+            TempStr defaultName = str::FormatTemp("export_%s.pdf", nameWithoutExt);
+            
+            // Show file save dialog
+            WCHAR dstFileName[MAX_PATH + 1]{};
+            str::Utf8ToWcharBuf(defaultName, dstFileName, dimof(dstFileName));
+            
+            OPENFILENAME ofn{};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = win->hwndFrame;
+            ofn.lpstrFile = dstFileName;
+            ofn.nMaxFile = dimof(dstFileName);
+            ofn.lpstrFilter = L"PDF documents\0*.pdf\0\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrDefExt = L"pdf";
+            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+            
+            if (!GetSaveFileNameW(&ofn)) {
+                delete pages;
+                break;
+            }
+            
+            // Ensure .pdf extension
+            TempStr outputPath = ToUtf8Temp(dstFileName);
+            if (!str::EndsWithI(outputPath, ".pdf")) {
+                outputPath = str::FormatTemp("%s.pdf", outputPath);
+            }
+            
+            // Extract the pages
+            if (ExtractPagesToNewPDF(engine, *pages, outputPath)) {
+                TempStr msg = str::FormatTemp("Successfully extracted %d pages to:\n%s", 
+                                            (int)pages->Size(), outputPath);
+                MessageBoxA(win->hwndFrame, msg, "Extract Pages", MB_OK | MB_ICONINFORMATION);
+            } else {
+                MessageBoxA(win->hwndFrame,
+                           "Failed to extract pages. Please check the file path and try again.",
+                           "Extract Pages", MB_OK | MB_ICONERROR);
+            }
+            
+            delete pages;
+            break;
+        }
+
         case CmdOpenPrevFileInFolder:
         case CmdOpenNextFileInFolder:
             if (!win->IsCurrentTabAbout()) {

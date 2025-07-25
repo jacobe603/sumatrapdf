@@ -572,6 +572,14 @@ static MenuDef menuDefSpecial[] = {
         CmdDeleteAllHighlights,
     },
     {
+        kMenuSeparator,
+        0,
+    },
+    {
+        _TRN("&Extract Pages..."),
+        CmdExtractPages,
+    },
+    {
         nullptr,
         0,
     },
