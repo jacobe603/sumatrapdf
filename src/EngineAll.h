@@ -70,6 +70,8 @@ bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& te
 bool DeleteAllBookmarks(EngineBase* engine);
 bool DeleteAllHighlights(EngineBase* engine);
 void RefreshTocForEngine(EngineBase* engine);
+bool ExtractSinglePageToNewPDF(EngineBase* engine, int pageNumber, const char* outputPath);
+bool ExtractMultiplePagesToNewPDF(EngineBase* engine, int startPage, int endPage, const char* outputPath);
 bool ExtractPagesToNewPDF(EngineBase* engine, Vec<int>& pageNumbers, const char* outputPath);
 
 /* EnginePs.cpp */

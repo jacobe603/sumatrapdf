@@ -4005,6 +4005,102 @@ Annotation* MakeAnnotationWrapper(EngineMupdf* engine, pdf_annot* annot, int pag
 // Helper functions removed - now using two-pass hierarchical approach
 
 // Two-pass hierarchical bookmark creation
+// WORKING VERSION RESTORED from commit ed7b53cba
+
+// (Function implementation moved below after DeleteAllHighlights)
+
+// Delete all bookmarks/outlines from the PDF document
+bool DeleteAllBookmarks(EngineBase* engine) {
+    if (!engine) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    bool success = false;
+    
+    fz_try(ctx) {
+        // Get PDF document root
+        pdf_obj* root = pdf_dict_get(ctx, pdf_trailer(ctx, epdf->pdfdoc), PDF_NAME(Root));
+        if (root) {
+            // Check if Outlines entry exists
+            pdf_obj* outlines = pdf_dict_get(ctx, root, PDF_NAME(Outlines));
+            if (outlines) {
+                // Simply delete the entire Outlines entry
+                pdf_dict_del(ctx, root, PDF_NAME(Outlines));
+                success = true;
+            } else {
+                success = true; // No bookmarks to delete is still "success"
+            }
+        }
+    }
+    fz_catch(ctx) {
+        success = false;
+    }
+    
+    // Refresh TOC cache if bookmarks were successfully deleted
+    if (success) {
+        epdf->RefreshToc();
+    }
+    
+    return success;
+}
+
+// Delete all highlight annotations from the PDF document
+bool DeleteAllHighlights(EngineBase* engine) {
+    if (!engine) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    int deletedCount = 0;
+    bool success = false;
+    
+    fz_try(ctx) {
+        int pageCount = pdf_count_pages(ctx, epdf->pdfdoc);
+        
+        // Iterate through all pages
+        for (int pageNo = 1; pageNo <= pageCount; pageNo++) {
+            pdf_page* page = pdf_load_page(ctx, epdf->pdfdoc, pageNo - 1);
+            
+            // Collect highlight annotations to delete (to avoid iterator invalidation)
+            Vec<pdf_annot*> toDelete;
+            pdf_annot* annot;
+            for (annot = pdf_first_annot(ctx, page); annot; annot = pdf_next_annot(ctx, annot)) {
+                if (pdf_annot_type(ctx, annot) == PDF_ANNOT_HIGHLIGHT) {
+                    toDelete.Append(annot);
+                }
+            }
+            
+            // Delete collected highlights
+            for (pdf_annot* highlight : toDelete) {
+                pdf_delete_annot(ctx, page, highlight);
+                deletedCount++;
+            }
+        }
+        
+        success = true;
+    }
+    fz_catch(ctx) {
+        success = false;
+    }
+    
+    return success && (deletedCount > 0);
+}
+
 bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& termData) {
     if (!engine || termData.Size() == 0) {
         return false;
@@ -4266,125 +4362,8 @@ bool CreateHierarchicalSearchBookmarks(EngineBase* engine, Vec<TermPageData>& te
     return success;
 }
 
-// Delete all bookmarks/outlines from the PDF document
-bool DeleteAllBookmarks(EngineBase* engine) {
-    if (!engine) {
-        return false;
-    }
-    
-    EngineMupdf* epdf = AsEngineMupdf(engine);
-    if (!epdf || !epdf->pdfdoc) {
-        return false;
-    }
-    
-    ScopedCritSec cs(epdf->ctxAccess);
-    fz_context* ctx = epdf->Ctx();
-    
-    bool success = false;
-    
-    fz_try(ctx) {
-        // Begin operation for proper transaction handling
-        pdf_begin_operation(ctx, epdf->pdfdoc, "Delete all bookmarks");
-        
-        // Get PDF document root
-        pdf_obj* root = pdf_dict_get(ctx, pdf_trailer(ctx, epdf->pdfdoc), PDF_NAME(Root));
-        if (root) {
-            // Check if Outlines entry exists
-            pdf_obj* outlines = pdf_dict_get(ctx, root, PDF_NAME(Outlines));
-            if (outlines) {
-                // Simply delete the entire Outlines entry
-                pdf_dict_del(ctx, root, PDF_NAME(Outlines));
-                logf("DeleteAllBookmarks: Successfully deleted all bookmarks\n");
-                success = true;
-            } else {
-                logf("DeleteAllBookmarks: No bookmarks found to delete\n");
-                success = true; // No bookmarks to delete is still "success"
-            }
-        }
-        
-        pdf_end_operation(ctx, epdf->pdfdoc);
-    }
-    fz_catch(ctx) {
-        logf("DeleteAllBookmarks: Exception caught during deletion\n");
-        pdf_abandon_operation(ctx, epdf->pdfdoc);
-        fz_report_error(ctx);
-        success = false;
-    }
-    
-    // Refresh TOC cache if bookmarks were successfully deleted
-    if (success) {
-        epdf->RefreshToc();
-        logf("DeleteAllBookmarks: Refreshed TOC cache after deleting bookmarks\n");
-    }
-    
-    return success;
-}
-
-// Delete all highlight annotations from the PDF document
-bool DeleteAllHighlights(EngineBase* engine) {
-    if (!engine) {
-        return false;
-    }
-    
-    EngineMupdf* epdf = AsEngineMupdf(engine);
-    if (!epdf || !epdf->pdfdoc) {
-        return false;
-    }
-    
-    ScopedCritSec cs(epdf->ctxAccess);
-    fz_context* ctx = epdf->Ctx();
-    
-    int deletedCount = 0;
-    bool success = false;
-    
-    fz_try(ctx) {
-        // Begin operation for proper transaction handling
-        pdf_begin_operation(ctx, epdf->pdfdoc, "Delete all highlights");
-        
-        int pageCount = pdf_count_pages(ctx, epdf->pdfdoc);
-        logf("DeleteAllHighlights: Processing %d pages\n", pageCount);
-        
-        // Iterate through all pages
-        for (int pageNo = 1; pageNo <= pageCount; pageNo++) {
-            pdf_page* page = pdf_load_page(ctx, epdf->pdfdoc, pageNo - 1);
-            
-            // Collect highlight annotations to delete (to avoid iterator invalidation)
-            Vec<pdf_annot*> toDelete;
-            pdf_annot* annot;
-            for (annot = pdf_first_annot(ctx, page); annot; annot = pdf_next_annot(ctx, annot)) {
-                if (pdf_annot_type(ctx, annot) == PDF_ANNOT_HIGHLIGHT) {
-                    toDelete.Append(annot);
-                }
-            }
-            
-            // Delete collected highlights
-            for (pdf_annot* highlight : toDelete) {
-                pdf_delete_annot(ctx, page, highlight);
-                deletedCount++;
-            }
-            
-            if (toDelete.Size() > 0) {
-                logf("DeleteAllHighlights: Deleted %d highlights from page %d\n", 
-                     (int)toDelete.Size(), pageNo);
-            }
-        }
-        
-        pdf_end_operation(ctx, epdf->pdfdoc);
-        logf("DeleteAllHighlights: Successfully deleted %d total highlights\n", deletedCount);
-        success = true;
-    }
-    fz_catch(ctx) {
-        logf("DeleteAllHighlights: Exception caught during deletion\n");
-        pdf_abandon_operation(ctx, epdf->pdfdoc);
-        fz_report_error(ctx);
-        success = false;
-    }
-    
-    return success && (deletedCount > 0);
-}
-
-// Legacy single bookmark function - now calls the hierarchical system
 bool AddSearchTermBookmark(EngineBase* engine, int pageNo, const char* searchTerm) {
+    // Legacy single bookmark function - now calls the hierarchical system
     // This function is kept for compatibility but should not be used
     // The main highlighting function should collect all data and call CreateHierarchicalSearchBookmarks
     return false;
@@ -4407,7 +4386,120 @@ void RefreshTocForEngine(EngineBase* engine) {
     }
 }
 
-// Extract specified pages from a PDF document to a new PDF file
+// Simplified: Extract single page to new PDF document using available MuPDF functions
+bool ExtractSinglePageToNewPDF(EngineBase* engine, int pageNumber, const char* outputPath) {
+    if (!engine || pageNumber <= 0 || !outputPath) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    bool success = false;
+    pdf_document* newDoc = nullptr;
+    
+    fz_try(ctx) {
+        // Validate page number (1-based)
+        int totalPages = pdf_count_pages(ctx, epdf->pdfdoc);
+        if (pageNumber < 1 || pageNumber > totalPages) {
+            return false;
+        }
+        
+        // Create a new PDF document
+        newDoc = pdf_create_document(ctx);
+        if (!newDoc) {
+            return false;
+        }
+        
+        // Use proper page grafting for cross-document operations (as per tasks.md final solution)
+        pdf_graft_map* graftMap = pdf_new_graft_map(ctx, newDoc);
+        if (!graftMap) {
+            return false;
+        }
+        
+        // Graft the page with proper resource copying (0-based index)
+        pdf_graft_mapped_page(ctx, graftMap, -1, epdf->pdfdoc, pageNumber - 1);
+        
+        // Clean up the graft map
+        pdf_drop_graft_map(ctx, graftMap);
+        
+        // Save the new document
+        pdf_save_document(ctx, newDoc, outputPath, nullptr);
+        success = true;
+    }
+    fz_catch(ctx) {
+        success = false;
+    }
+    
+    // Clean up the new document
+    if (newDoc) {
+        pdf_drop_document(ctx, newDoc);
+    }
+    
+    return success;
+}
+
+// Multi-page: Extract page range to new PDF document using available MuPDF functions  
+bool ExtractMultiplePagesToNewPDF(EngineBase* engine, int startPage, int endPage, const char* outputPath) {
+    if (!engine || startPage <= 0 || endPage < startPage || !outputPath) {
+        return false;
+    }
+    
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    bool success = false;
+    pdf_document* newDoc = nullptr;
+    
+    fz_try(ctx) {
+        // Validate page range
+        int totalPages = pdf_count_pages(ctx, epdf->pdfdoc);
+        int actualEndPage = (endPage > totalPages) ? totalPages : endPage;
+        
+        if (startPage > totalPages) {
+            return false;
+        }
+        
+        // Create a new PDF document
+        newDoc = pdf_create_document(ctx);
+        if (!newDoc) {
+            return false;
+        }
+        
+        // Extract each page in the range using available API
+        for (int pageNum = startPage; pageNum <= actualEndPage; pageNum++) {
+            pdf_obj* pageObj = pdf_lookup_page_obj(ctx, epdf->pdfdoc, pageNum - 1);
+            if (pageObj) {
+                pdf_insert_page(ctx, newDoc, -1, pageObj);
+            }
+        }
+        
+        // Save the new document
+        pdf_save_document(ctx, newDoc, outputPath, nullptr);
+        success = true;
+    }
+    fz_catch(ctx) {
+        success = false;
+    }
+    
+    if (newDoc) {
+        pdf_drop_document(ctx, newDoc);
+    }
+    
+    return success;
+}
+
+// Legacy: Extract specified pages from a PDF document to a new PDF file (uses Vec<int>)
 bool ExtractPagesToNewPDF(EngineBase* engine, Vec<int>& pageNumbers, const char* outputPath) {
     if (!engine || pageNumbers.Size() == 0 || !outputPath) {
         return false;
@@ -4425,63 +4517,40 @@ bool ExtractPagesToNewPDF(EngineBase* engine, Vec<int>& pageNumbers, const char*
     pdf_document* newDoc = nullptr;
     
     fz_try(ctx) {
+        int totalPages = pdf_count_pages(ctx, epdf->pdfdoc);
+        
         // Create a new PDF document
         newDoc = pdf_create_document(ctx);
         if (!newDoc) {
-            logf("ExtractPagesToNewPDF: Failed to create new PDF document\n");
             return false;
         }
-        
-        logf("ExtractPagesToNewPDF: Created new PDF document, extracting %d pages\n", (int)pageNumbers.Size());
         
         // Extract each page in the specified order
         for (size_t i = 0; i < pageNumbers.Size(); i++) {
             int pageNo = pageNumbers[i];
             
             // Validate page number (1-based)
-            if (pageNo < 1 || pageNo > pdf_count_pages(ctx, epdf->pdfdoc)) {
-                logf("ExtractPagesToNewPDF: Invalid page number %d\n", pageNo);
+            if (pageNo < 1 || pageNo > totalPages) {
                 continue;
             }
             
-            // Load the source page (convert to 0-based)
-            pdf_page* srcPage = pdf_load_page(ctx, epdf->pdfdoc, pageNo - 1);
-            if (!srcPage) {
-                logf("ExtractPagesToNewPDF: Failed to load source page %d\n", pageNo);
-                continue;
+            // Get page object and insert into new document
+            pdf_obj* srcPageObj = pdf_lookup_page_obj(ctx, epdf->pdfdoc, pageNo - 1);
+            if (srcPageObj) {
+                pdf_insert_page(ctx, newDoc, -1, srcPageObj);
             }
-            
-            // Get the page object from source document
-            pdf_obj* srcPageObj = pdf_page_obj(ctx, srcPage);
-            if (!srcPageObj) {
-                logf("ExtractPagesToNewPDF: Failed to get page object for page %d\n", pageNo);
-                fz_drop_page(ctx, (fz_page*)srcPage);
-                continue;
-            }
-            
-            // Insert the page into the new document
-            // pdf_insert_page inserts at the end when pageNum = -1
-            pdf_insert_page(ctx, newDoc, -1, srcPageObj);
-            
-            logf("ExtractPagesToNewPDF: Successfully copied page %d\n", pageNo);
-            
-            // Clean up the source page
-            fz_drop_page(ctx, (fz_page*)srcPage);
         }
         
-        // Save the new document
-        pdf_save_document(ctx, newDoc, outputPath, nullptr);
-        logf("ExtractPagesToNewPDF: Successfully saved extracted PDF to %s\n", outputPath);
-        
-        success = true;
+        // Save if we have pages
+        if (pdf_count_pages(ctx, newDoc) > 0) {
+            pdf_save_document(ctx, newDoc, outputPath, nullptr);
+            success = true;
+        }
     }
     fz_catch(ctx) {
-        logf("ExtractPagesToNewPDF: Exception caught during page extraction\n");
-        fz_report_error(ctx);
         success = false;
     }
     
-    // Clean up the new document
     if (newDoc) {
         pdf_drop_document(ctx, newDoc);
     }

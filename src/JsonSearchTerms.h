@@ -3,6 +3,10 @@
 
 // Search terms functionality interface
 
+#pragma once
+
+#include <windows.h>  // For COLORREF
+
 struct KeySearchTerm {
     char* text;        // Simple pointer - no dynamic management for now
     COLORREF color;
@@ -18,3 +22,6 @@ void ReloadSearchTermsFromFile();
 
 void ShowLoadSearchTermsDialog(void* tab);
 void ClearKeyTermHighlights(void* win);
+
+// Core highlighting function (implemented in SumatraPDF.cpp)
+void CreateHighlightAnnotationsForKeyTerms(void* tabPtr);

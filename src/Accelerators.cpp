@@ -142,6 +142,7 @@ ACCEL gBuiltInAccelerators[] = {
     {FCONTROL | FVIRTKEY, 'C', CmdCopySelection},
     {FCONTROL | FVIRTKEY, VK_INSERT, CmdCopySelection},
     {FCONTROL | FVIRTKEY, 'D', CmdProperties},
+    {FSHIFT | FCONTROL | FVIRTKEY, 'E', CmdShowInFolder},
     {FCONTROL | FVIRTKEY, 'F', CmdFindFirst},
     {FCONTROL | FVIRTKEY, 'G', CmdGoToPage},
     {0, 'g', CmdGoToPage},

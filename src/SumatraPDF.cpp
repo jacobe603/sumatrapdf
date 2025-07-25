@@ -5491,94 +5491,110 @@ static LRESULT FrameOnCommand(MainWindow* win, HWND hwnd, UINT msg, WPARAM wp, L
         }
 
         case CmdExtractPages: {
+            logf("=== EXTRACT_PAGES: Command started ===");
+            logf("EXTRACT_PAGES: Window=%p, currPageNo=%d", win, win->currPageNo);
+            
             if (!win->IsDocLoaded()) {
+                logf("EXTRACT_PAGES: ERROR - No document loaded");
+                break;
+            }
+            logf("EXTRACT_PAGES: Document loaded check passed");
+            
+            WindowTab* currentTab = win->CurrentTab();
+            logf("EXTRACT_PAGES: CurrentTab=%p", currentTab);
+            if (!currentTab) {
+                logf("EXTRACT_PAGES: ERROR - No current tab");
                 break;
             }
             
-            WindowTab* tab = win->CurrentTab();
-            if (!tab) {
-                break;
-            }
-            
-            EngineBase* engine = tab->GetEngine();
+            EngineBase* engine = currentTab->GetEngine();
+            logf("EXTRACT_PAGES: Engine=%p", engine);
             if (!engine) {
+                logf("EXTRACT_PAGES: ERROR - No engine");
                 break;
             }
+            logf("EXTRACT_PAGES: Engine kind=%s", engine->kind);
             
             // Only support PDF documents for now
-            if (!AsEngineMupdf(engine)) {
+            if (!engine || engine->kind != kindEngineMupdf) {
+                logf("EXTRACT_PAGES: ERROR - Not a PDF document (kind=%s)", engine ? engine->kind : "null");
                 MessageBoxA(win->hwndFrame,
                            "Page extraction is currently only supported for PDF documents.",
                            "Extract Pages", MB_OK | MB_ICONINFORMATION);
                 break;
             }
+            logf("EXTRACT_PAGES: PDF engine validation passed");
             
             int pageCount = engine->PageCount();
             int currentPage = win->currPageNo;
+            logf("EXTRACT_PAGES: Document info - pageCount=%d, currentPage=%d", pageCount, currentPage);
+            logf("EXTRACT_PAGES: Document path=%s", engine->FilePath());
             
-            // Show the page extraction dialog
-            AutoFreeStr pageRanges = Dialog_ExtractPages(win->hwndFrame, pageCount, currentPage);
-            if (!pageRanges) {
-                // User cancelled
+            // USER INPUT: Show dialog for single page number
+            logf("EXTRACT_PAGES: USER INPUT MODE - Showing dialog for single page");
+            
+            // Show simple page input dialog (JSON pattern)
+            logf("EXTRACT_PAGES: Showing simple input dialog...");
+            char* pageInput = GetPageNumberFromUser(win->hwndFrame, pageCount, currentPage);
+            if (!pageInput) {
+                logf("EXTRACT_PAGES: User cancelled or invalid input");
                 break;
             }
+            logf("EXTRACT_PAGES: User entered: '%s'", pageInput ? pageInput : "NULL");
             
-            // Parse the page ranges
-            Vec<int>* pages = ParsePageRanges(pageRanges, pageCount);
-            if (!pages) {
+            // Parse the single page number using our proven function
+            logf("EXTRACT_PAGES: Parsing single page number...");
+            int pageNumber = ParseSinglePage(pageInput, pageCount);
+            if (pageNumber == 0) {
+                logf("EXTRACT_PAGES: ERROR - ParseSinglePage failed for input '%s'", pageInput);
                 MessageBoxA(win->hwndFrame,
-                           "Invalid page range format. Please check your input.",
+                           "Invalid page number. Please enter a valid page number.",
                            "Extract Pages", MB_OK | MB_ICONWARNING);
+                str::Free(pageInput);
                 break;
             }
             
-            // Generate default filename
-            TempStr srcFileName = (TempStr)engine->FilePath();
-            TempStr baseName = path::GetBaseNameTemp(srcFileName);
-            TempStr nameWithoutExt = str::DupTemp(baseName);
-            char* ext = str::FindCharLast(nameWithoutExt, '.');
-            if (ext) {
-                *ext = '\0';  // Remove extension
-            }
-            TempStr defaultName = str::FormatTemp("export_%s.pdf", nameWithoutExt);
+            logf("EXTRACT_PAGES: Successfully parsed page number: %d", pageNumber);
+            str::Free(pageInput);
             
-            // Show file save dialog
-            WCHAR dstFileName[MAX_PATH + 1]{};
-            str::Utf8ToWcharBuf(defaultName, dstFileName, dimof(dstFileName));
+            // Generate simple output filename with page number
+            logf("EXTRACT_PAGES: Generating output filename for page %d", pageNumber);
+            char outputFileName[256];
+            sprintf_s(outputFileName, sizeof(outputFileName), "C:\\temp\\extracted_page_%d.pdf", pageNumber);
+            logf("EXTRACT_PAGES: Output path: %s", outputFileName);
             
-            OPENFILENAME ofn{};
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner = win->hwndFrame;
-            ofn.lpstrFile = dstFileName;
-            ofn.nMaxFile = dimof(dstFileName);
-            ofn.lpstrFilter = L"PDF documents\0*.pdf\0\0";
-            ofn.nFilterIndex = 1;
-            ofn.lpstrDefExt = L"pdf";
-            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+            // Ensure temp directory exists
+            logf("EXTRACT_PAGES: Creating temp directory if needed...");
+            CreateDirectoryA("C:\\temp", nullptr);
+            logf("EXTRACT_PAGES: Temp directory ready");
             
-            if (!GetSaveFileNameW(&ofn)) {
-                delete pages;
-                break;
-            }
+            // Pre-extraction state logging
+            logf("EXTRACT_PAGES: PRE-EXTRACTION STATE:");
+            logf("EXTRACT_PAGES: - Engine=%p, kind=%s", engine, engine->kind);
+            logf("EXTRACT_PAGES: - Current page in viewer: %d", win->currPageNo);
+            logf("EXTRACT_PAGES: - About to extract page %d", pageNumber);
             
-            // Ensure .pdf extension
-            TempStr outputPath = ToUtf8Temp(dstFileName);
-            if (!str::EndsWithI(outputPath, ".pdf")) {
-                outputPath = str::FormatTemp("%s.pdf", outputPath);
-            }
+            // Extract the single page - CRITICAL POINT
+            logf("EXTRACT_PAGES: *** CALLING ExtractSinglePageToNewPDF ***");
+            bool extractionResult = ExtractSinglePageToNewPDF(engine, pageNumber, outputFileName);
+            logf("EXTRACT_PAGES: *** ExtractSinglePageToNewPDF RETURNED: %s ***", extractionResult ? "SUCCESS" : "FAILURE");
             
-            // Extract the pages
-            if (ExtractPagesToNewPDF(engine, *pages, outputPath)) {
-                TempStr msg = str::FormatTemp("Successfully extracted %d pages to:\n%s", 
-                                            (int)pages->Size(), outputPath);
-                MessageBoxA(win->hwndFrame, msg, "Extract Pages", MB_OK | MB_ICONINFORMATION);
+            if (extractionResult) {
+                logf("EXTRACT_PAGES: SUCCESS - Showing success message");
+                char successMessage[512];
+                sprintf_s(successMessage, sizeof(successMessage), 
+                         "Successfully extracted page %d to %s", pageNumber, outputFileName);
+                MessageBoxA(win->hwndFrame, successMessage, "Extract Pages", MB_OK | MB_ICONINFORMATION);
             } else {
-                MessageBoxA(win->hwndFrame,
-                           "Failed to extract pages. Please check the file path and try again.",
-                           "Extract Pages", MB_OK | MB_ICONERROR);
+                logf("EXTRACT_PAGES: FAILURE - Showing error message");
+                char errorMessage[256];
+                sprintf_s(errorMessage, sizeof(errorMessage), 
+                         "Failed to extract page %d. Check logs for details.", pageNumber);
+                MessageBoxA(win->hwndFrame, errorMessage, "Extract Pages", MB_OK | MB_ICONERROR);
             }
             
-            delete pages;
+            logf("EXTRACT_PAGES: Command completed");
+            logf("=== EXTRACT_PAGES: END ===");
             break;
         }
 

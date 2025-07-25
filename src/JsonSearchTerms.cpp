@@ -12,8 +12,7 @@
 
 #include <algorithm> // for std::min
 
-// External implementation function (defined in SumatraPDF.cpp)
-extern void CreateHighlightAnnotationsForKeyTerms(void* tabPtr);
+// Forward declaration - implementation is in SumatraPDF.cpp
 
 // Dynamic storage for loaded JSON data
 static Vec<KeySearchTerm> gLoadedTerms;

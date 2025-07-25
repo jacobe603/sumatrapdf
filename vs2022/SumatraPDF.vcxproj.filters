@@ -177,6 +177,9 @@
     <ClInclude Include="..\src\Installer.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\JsonSearchTerms.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\MainWindow.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -330,6 +333,7 @@
     <ClInclude Include="..\src\wingui\WinGui.h">
       <Filter>src\wingui</Filter>
     </ClInclude>
+    <ClInclude Include="src\utils\StrUtil.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ext\darkmodelib\src\DarkMode.cpp">
@@ -456,6 +460,9 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\src\InstallerCommon.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\JsonSearchTerms.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\src\MainWindow.cpp">
@@ -697,9 +704,6 @@
     <None Include="..\.gitignore" />
     <None Include="..\Appx\AppxManifest.xml">
       <Filter>Appx</Filter>
-    </None>
-    <None Include="..\do\appx.go">
-      <Filter>do</Filter>
     </None>
     <None Include="..\do\build.go">
       <Filter>do</Filter>

@@ -20,6 +20,8 @@
 #include "Theme.h"
 #include "DarkModeSubclass.h"
 
+#include "utils/Log.h"
+
 // http://msdn.microsoft.com/en-us/library/ms645398(v=VS.85).aspx
 #pragma pack(push, 1)
 struct DLGTEMPLATEEX {
@@ -1081,7 +1083,7 @@ static INT_PTR CALLBACK Dialog_ExtractPages_Proc(HWND hDlg, UINT msg, WPARAM wp,
     Dialog_ExtractPages_Data* data;
 
     switch (msg) {
-        case WM_INITDIALOG:
+        case WM_INITDIALOG: {
             data = (Dialog_ExtractPages_Data*)lp;
             SetWindowLongPtr(hDlg, GWLP_USERDATA, (LONG_PTR)data);
             if (gUseDarkModeLib) {
@@ -1111,6 +1113,7 @@ static INT_PTR CALLBACK Dialog_ExtractPages_Proc(HWND hDlg, UINT msg, WPARAM wp,
             CenterDialog(hDlg);
             HwndSetFocus(editCtrl);
             return FALSE;
+        }
 
         case WM_COMMAND:
             data = (Dialog_ExtractPages_Data*)GetWindowLongPtr(hDlg, GWLP_USERDATA);
@@ -1118,23 +1121,23 @@ static INT_PTR CALLBACK Dialog_ExtractPages_Proc(HWND hDlg, UINT msg, WPARAM wp,
             switch (LOWORD(wp)) {
                 case IDOK: {
                     // Get the page ranges from the edit control
-                    AutoFreeWStr rangesW = HwndGetDlgItemText(hDlg, IDC_EXTRACT_PAGES_EDIT);
+                    HWND editCtrl = GetDlgItem(hDlg, IDC_EXTRACT_PAGES_EDIT);
+                    AutoFreeWStr rangesW = HwndGetTextWTemp(editCtrl);
                     AutoFreeStr ranges = ToUtf8Temp(rangesW);
                     
-                    // Validate the page ranges
-                    Vec<int>* pageList = ParsePageRanges(ranges, data->pageCount);
-                    if (!pageList) {
+                    // Validate the single page number
+                    int pageNumber = ParseSinglePage(ranges, data->pageCount);
+                    if (pageNumber == 0) {
                         // Show error message for invalid input
                         MessageBoxA(hDlg, 
-                                   _TRA("Invalid page range format. Please use format like: 1,3,5-10"),
+                                   _TRA("Invalid page number. Please enter a valid page number."),
                                    _TRA("Invalid Input"), 
                                    MB_OK | MB_ICONWARNING);
                         return TRUE;
                     }
                     
-                    // Save the valid page ranges
+                    // Save the valid page number as string
                     data->pageRanges = str::Dup(ranges);
-                    delete pageList;  // We don't need the parsed list here, just validation
                     
                     EndDialog(hDlg, IDOK);
                     return TRUE;
@@ -1168,84 +1171,149 @@ char* Dialog_ExtractPages(HWND hwnd, int pageCount, int currentPage) {
         return nullptr;
     }
     
-    return data.pageRanges;  // Ownership transferred to caller
+    // Transfer ownership to caller and prevent double-free
+    char* result = data.pageRanges;
+    data.pageRanges = nullptr;  // Prevent destructor from freeing
+    return result;
 }
 
-// Parse page range input like "1,3-5,10-12" into a list of individual page numbers
-// Returns nullptr if parsing fails, otherwise returns a sorted, deduplicated list of valid pages
-Vec<int>* ParsePageRanges(const char* input, int totalPages) {
+
+// Simplified: Parse single page number from input
+// Returns 0 if parsing fails, otherwise returns the page number (1-based)
+int ParseSinglePage(const char* input, int totalPages) {
+    logf("=== ParseSinglePage: ENTRY ===");
+    logf("ParseSinglePage: input='%s', totalPages=%d", input ? input : "NULL", totalPages);
+    
     if (!input || !*input || totalPages <= 0) {
+        logf("ParseSinglePage: ERROR - Invalid parameters (input=%p, totalPages=%d)", input, totalPages);
+        return 0;
+    }
+    
+    // Simple parsing - just convert to integer
+    logf("ParseSinglePage: Parsing input as integer...");
+    int pageNumber = atoi(input);
+    logf("ParseSinglePage: Parsed page number: %d", pageNumber);
+    
+    // Validate page number
+    if (pageNumber <= 0 || pageNumber > totalPages) {
+        logf("ParseSinglePage: ERROR - Invalid page number %d (valid range: 1-%d)", pageNumber, totalPages);
+        return 0;
+    }
+    
+    logf("=== ParseSinglePage: SUCCESS - Returning page %d ===", pageNumber);
+    return pageNumber;
+}
+
+// Simple dialog state for page input (stack-only, no complex ownership)
+struct SimplePageInputData {
+    char userInput[32];
+    bool userClickedOK;
+    int pageCount;
+};
+
+// Simple dialog procedure (minimal state, JSON-style patterns)
+static INT_PTR CALLBACK SimplePageInputProc(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp) {
+    SimplePageInputData* data = (SimplePageInputData*)GetWindowLongPtr(hDlg, GWLP_USERDATA);
+
+    switch (msg) {
+        case WM_INITDIALOG: {
+            // Set up dialog data (simple stack struct)
+            data = (SimplePageInputData*)lp;
+            SetWindowLongPtr(hDlg, GWLP_USERDATA, (LONG_PTR)data);
+            
+            // Set window title and labels
+            SetWindowTextA(hDlg, "Extract Page");
+            
+            // Set up prompt text
+            char prompt[256];
+            sprintf_s(prompt, sizeof(prompt), "(of %d pages)", data->pageCount);
+            SetDlgItemTextA(hDlg, IDC_EXTRACT_PAGES_TOTAL, prompt);
+            
+            // Focus on edit control
+            HWND editCtrl = GetDlgItem(hDlg, IDC_EXTRACT_PAGES_EDIT);
+            SetFocus(editCtrl);
+            return FALSE; // Don't set focus automatically
+        }
+
+        case WM_COMMAND: {
+            if (!data) return FALSE;
+            
+            switch (LOWORD(wp)) {
+                case IDOK: {
+                    // Get text from edit control (fixed buffer - JSON pattern)
+                    GetDlgItemTextA(hDlg, IDC_EXTRACT_PAGES_EDIT, data->userInput, sizeof(data->userInput));
+                    data->userClickedOK = true;
+                    EndDialog(hDlg, IDOK);
+                    return TRUE;
+                }
+                
+                case IDCANCEL:
+                    data->userClickedOK = false;
+                    EndDialog(hDlg, IDCANCEL);
+                    return TRUE;
+            }
+            break;
+        }
+
+        case WM_CLOSE:
+            if (data) data->userClickedOK = false;
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+    }
+    
+    return FALSE;
+}
+
+// Simple page input using JSON-style memory patterns (no complex ownership)
+char* GetPageNumberFromUser(HWND hwnd, int pageCount, int currentPage) {
+    logf("=== GetPageNumberFromUser: ENTRY ===");
+    logf("GetPageNumberFromUser: pageCount=%d, currentPage=%d", pageCount, currentPage);
+    
+    // Simple stack-allocated state (JSON pattern)
+    SimplePageInputData data = {};
+    data.pageCount = pageCount;
+    data.userClickedOK = false;
+    
+    // Set default text
+    sprintf_s(data.userInput, sizeof(data.userInput), "%d", currentPage);
+    
+    logf("GetPageNumberFromUser: Showing dialog with default='%s'", data.userInput);
+    
+    // Show dialog using simple procedure
+    INT_PTR result = DialogBoxParam(GetModuleHandle(nullptr), 
+                                   MAKEINTRESOURCE(IDD_DIALOG_EXTRACT_PAGES), 
+                                   hwnd, 
+                                   SimplePageInputProc, 
+                                   (LPARAM)&data);
+    
+    if (result != IDOK || !data.userClickedOK) {
+        logf("GetPageNumberFromUser: User cancelled (result=%d, clickedOK=%d)", (int)result, data.userClickedOK);
         return nullptr;
     }
     
-    auto* pages = new Vec<int>();
+    logf("GetPageNumberFromUser: User entered='%s'", data.userInput);
     
-    // Create a copy of input for tokenization
-    AutoFreeStr inputCopy = str::Dup(input);
-    
-    // Split by commas and process each part
-    StrVec parts;
-    str::Split(inputCopy, ",", parts);
-    
-    for (size_t i = 0; i < parts.Size(); i++) {
-        char* part = str::TrimWS(parts[i]);
-        if (!part || !*part) {
-            continue;
-        }
-        
-        // Check if it's a range (contains '-')
-        char* dash = str::FindChar(part, '-');
-        if (dash) {
-            // It's a range like "3-7"
-            *dash = '\0';  // Split at the dash
-            char* startStr = str::TrimWS(part);
-            char* endStr = str::TrimWS(dash + 1);
-            
-            int start = atoi(startStr);
-            int end = atoi(endStr);
-            
-            // Validate range
-            if (start <= 0 || end <= 0 || start > totalPages || end > totalPages || start > end) {
-                // Invalid range
-                delete pages;
-                return nullptr;
-            }
-            
-            // Add all pages in range
-            for (int pageNo = start; pageNo <= end; pageNo++) {
-                pages->Append(pageNo);
-            }
-        } else {
-            // It's a single page number
-            int pageNo = atoi(part);
-            if (pageNo <= 0 || pageNo > totalPages) {
-                // Invalid page number
-                delete pages;
-                return nullptr;
-            }
-            pages->Append(pageNo);
-        }
-    }
-    
-    if (pages->Size() == 0) {
-        delete pages;
+    // Simple validation and return (JSON pattern - return str::Dup or nullptr)
+    int pageNum = atoi(data.userInput);
+    if (pageNum <= 0 || pageNum > pageCount) {
+        logf("GetPageNumberFromUser: Invalid page number %d (valid range: 1-%d)", pageNum, pageCount);
         return nullptr;
     }
     
-    // Sort and remove duplicates
-    pages->Sort();
+    // Return simple duplicated string (JSON pattern)
+    char* returnResult = str::Dup(data.userInput);
+    logf("GetPageNumberFromUser: SUCCESS - Returning '%s'", returnResult);
+    return returnResult;
+}
+
+// DEPRECATED: Legacy function for compatibility - DO NOT USE
+// Use ParseSinglePage() and ExtractSinglePageToNewPDF() instead
+Vec<int>* ParsePageRanges(const char* input, int totalPages) {
+    logf("=== ParsePageRanges: DEPRECATED FUNCTION CALLED ===");
+    logf("ParsePageRanges: This function is deprecated and should not be used");
+    logf("ParsePageRanges: Use ParseSinglePage() instead");
     
-    // Remove duplicates by creating a new vector
-    auto* uniquePages = new Vec<int>();
-    int lastPage = -1;
-    for (size_t i = 0; i < pages->Size(); i++) {
-        int currentPage = pages->At(i);
-        if (currentPage != lastPage) {
-            uniquePages->Append(currentPage);
-            lastPage = currentPage;
-        }
-    }
-    
-    delete pages;
-    return uniquePages;
+    // Return nullptr to indicate this function should not be used
+    logf("ParsePageRanges: Returning nullptr - caller should use ParseSinglePage");
+    return nullptr;
 }
