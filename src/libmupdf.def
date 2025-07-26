@@ -560,8 +560,15 @@ EXPORTS
 	pdf_needs_password
 	pdf_authenticate_password
 	pdf_has_permission
-	pdf_load_outline
 	pdf_create_document
+	pdf_new_outline_iterator
+	fz_new_outline_iterator
+	fz_outline_iterator_next
+	fz_outline_iterator_down
+	fz_outline_iterator_up
+	fz_outline_iterator_item
+	fz_drop_outline_iterator
+	fz_outline_iterator_insert
 	pdf_insert_page
 	pdf_delete_page
 	pdf_delete_page_range

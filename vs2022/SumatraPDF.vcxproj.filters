@@ -333,7 +333,6 @@
     <ClInclude Include="..\src\wingui\WinGui.h">
       <Filter>src\wingui</Filter>
     </ClInclude>
-    <ClInclude Include="src\utils\StrUtil.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ext\darkmodelib\src\DarkMode.cpp">

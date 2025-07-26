@@ -1056,7 +1056,6 @@
     <ClInclude Include="..\src\wingui\VirtWnd.h" />
     <ClInclude Include="..\src\wingui\WebView.h" />
     <ClInclude Include="..\src\wingui\WinGui.h" />
-    <ClInclude Include="src\utils\StrUtil.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\ext\darkmodelib\src\DarkMode.cpp" />

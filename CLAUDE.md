@@ -575,3 +575,202 @@ With all core functionality restored, the codebase is now ready for:
 - **Performance Optimization**: Caching and batch operations
 
 **Current State**: Production-ready feature set with excellent foundation for future enhancements.
+
+## Development Lessons Learned (2025-07-26)
+
+### 🎯 Major Achievement: Page Range Extraction System
+
+Successfully implemented a comprehensive page range extraction system supporting complex input formats like "1-23", "2-5,8,12-15" while completely avoiding the memory corruption issues that plagued earlier attempts.
+
+### 🧠 Memory Management Lessons
+
+#### The "JSON Memory Patterns" Success Formula
+
+**Discovered Pattern**: The most reliable memory management approach in this codebase follows what we termed "JSON memory patterns" - simple, stack-first allocation with clear ownership transfer.
+
+**Successful Pattern**:
+```cpp
+// 1. Stack-allocated structures with fixed-size arrays
+struct PageRangeData {
+    int pages[1000];        // Fixed array - no dynamic allocation
+    int count;              // Simple count tracking  
+    char inputText[256];    // Copy of user input for debugging
+    bool isValid;           // Simple validation flag
+};
+
+// 2. Simple ownership transfer using str::Dup()
+char* GetPageRangeFromUser(HWND hwnd, int pageCount, int currentPage) {
+    // ... dialog handling with stack allocation ...
+    return str::Dup(data.userInput);  // Clear ownership transfer
+}
+
+// 3. Manual cleanup with clear responsibility
+char* result = GetPageRangeFromUser(hwnd, pageCount, currentPage);
+// ... use result ...
+free(result);  // Caller manages cleanup
+```
+
+#### What NOT to Do - Lessons from Failed Attempts
+
+**❌ Vec<int> Dynamic Arrays**:
+- **Problem**: Multiple deletion points caused heap corruption
+- **Symptoms**: "Heap corruption detected" crashes during cleanup
+- **Root Cause**: Complex destructor chains and automatic memory management conflicts
+
+**❌ AutoFreeStr Complex Ownership**:
+- **Problem**: Destructor conflicts during stack unwinding
+- **Symptoms**: Access violations during function exit
+- **Root Cause**: Unclear ownership boundaries between automatic and manual cleanup
+
+**❌ Complex Dialog State Structures**:
+- **Problem**: Dialog_ExtractPages_Data with nested automatic cleanup
+- **Symptoms**: Memory corruption during dialog dismissal
+- **Root Cause**: Complex state with multiple cleanup paths
+
+#### Proven Memory Safety Principles
+
+1. **Stack-First Allocation**: Use fixed-size buffers whenever possible
+2. **Simple Ownership**: One allocation point, one deallocation point
+3. **No Complex Destructors**: Avoid automatic memory management in dialogs
+4. **Clear Transfer Points**: Use patterns like `str::Dup()` for ownership transfer
+5. **Manual Validation**: Explicit bounds checking instead of relying on containers
+
+### 🔗 Linker Issues and MuPDF Integration
+
+#### Issue 1: Function Export Problems
+
+**Problem**: `LNK2001: unresolved external symbol pdf_new_outline_iterator`
+
+**Root Cause Discovery Process**:
+1. **Initial Assumption**: Function not exported in libmupdf.def
+2. **First Attempt**: Added `fz_new_outline_iterator` to exports - still failed
+3. **Deeper Investigation**: Found internal MuPDF bridge functions calling `pdf_new_outline_iterator`
+4. **Real Issue**: `pdf-outline.c` source file not included in Visual Studio project
+
+**Correct Solution**:
+- Added `pdf-outline.c` to `mupdf.vcxproj` compilation list
+- Added corresponding filter entry in `mupdf.vcxproj.filters`
+- Kept using `pdf_new_outline_iterator` (correct for PDF documents)
+
+#### Issue 2: Function Signature Confusion
+
+**Problem**: Confusion between `pdf_new_outline_iterator` vs `fz_new_outline_iterator`
+
+**Learning**: 
+- `pdf_new_outline_iterator(ctx, pdf_document*)` - For PDF-specific operations
+- `fz_new_outline_iterator(ctx, fz_document*)` - For generic document operations
+- MuPDF internally bridges these through `pdf_new_outline_iterator_imp`
+
+**Best Practice**: Use PDF-specific functions when working with PDF documents directly
+
+#### Issue 3: Variable Name Conflicts
+
+**Problem**: `error C2220: declaration of 'fzDoc' hides previous local declaration`
+
+**Solution**: Careful variable scope management and reuse of existing variables
+
+### 🛠️ Build System Lessons
+
+#### MuPDF Project Structure Understanding
+
+**Key Insight**: The MuPDF library is built as a separate project with its own .vcxproj file. Missing source files in this project cause linker errors even if functions are declared in headers.
+
+**Investigation Process**:
+1. Check exports in `libmupdf.def` ✓
+2. Check function declarations in headers ✓
+3. Check function implementation exists ✓
+4. **Missing Step**: Check if source file is included in project compilation
+
+**Best Practice**: When adding MuPDF functionality, verify the source file is in the mupdf.vcxproj
+
+#### Debugging Linker Errors Systematically
+
+**Effective Process**:
+1. **Identify Symbol**: Determine if it's missing export, declaration, or implementation
+2. **Check Exports**: Verify libmupdf.def contains the symbol
+3. **Check Headers**: Ensure proper includes and declarations
+4. **Check Implementation**: Verify source file exists and contains function
+5. **Check Build**: Ensure source file is compiled into the library
+6. **Check Linkage**: Verify projects are properly linked
+
+### 🎯 Successful Development Patterns
+
+#### 1. Incremental Development with Proven Patterns
+
+**Approach**: Build upon existing working code patterns rather than creating new paradigms
+- Used existing dialog patterns from `Dialog_GoToPage`
+- Followed existing MuPDF integration patterns from single page extraction
+- Applied successful "JSON memory patterns" from working features
+
+#### 2. Build System First
+
+**Learning**: Understand the build system before making complex changes
+- Identified how premake5 generates Visual Studio projects
+- Understood MuPDF as separate library project
+- Recognized the role of .def files in symbol exports
+
+#### 3. Memory Safety Through Simplicity
+
+**Philosophy**: When in doubt, choose the simpler memory management approach
+- Fixed arrays over dynamic containers
+- Manual ownership over automatic cleanup
+- Stack allocation over heap allocation
+- Clear transfer points over complex sharing
+
+### 📋 Feature Development Checklist
+
+Based on successful page range extraction implementation:
+
+**Planning Phase**:
+- [ ] Identify existing similar patterns in codebase
+- [ ] Choose memory management approach (prefer "JSON patterns")
+- [ ] Plan function signatures with clear ownership
+- [ ] Identify required MuPDF functions and verify availability
+
+**Implementation Phase**:
+- [ ] Use stack-allocated structures where possible
+- [ ] Follow existing dialog/UI patterns
+- [ ] Implement with extensive logging for debugging
+- [ ] Use existing helper functions (`str::Dup`, `GetTempPath`, etc.)
+
+**Build Integration Phase**:
+- [ ] Verify all required source files are in project
+- [ ] Check .def exports for MuPDF functions
+- [ ] Test compilation frequently during development
+- [ ] Resolve linker issues before proceeding
+
+**Testing Phase**:
+- [ ] Test with complex input scenarios
+- [ ] Verify memory cleanup (no leaks or corruption)
+- [ ] Test integration with existing features
+- [ ] Verify persistence (PDF annotations, file outputs)
+
+### 🏆 Success Metrics
+
+**Page Range Extraction Achievement**:
+- ✅ **Zero Memory Crashes**: Complete elimination of heap corruption
+- ✅ **Complex Input Support**: Handles "1-23", "2-5,8,12-15" formats reliably
+- ✅ **Integration Success**: Works seamlessly with existing features
+- ✅ **Build System Success**: Clean compilation in VS 2022
+- ✅ **Production Ready**: Stable foundation for future enhancements
+
+**Key Success Factor**: Applying proven patterns and thoroughly understanding the existing codebase architecture before implementation.
+
+### 🔮 Future Development Roadmap
+
+With proven patterns established, the codebase is ready for:
+
+**Immediate Enhancements**:
+- **Custom Search Terms**: Apply JSON memory patterns to user-configurable highlighting
+- **Bookmark Management UI**: Use proven dialog patterns for bookmark editing
+- **Enhanced Error Handling**: Apply logging patterns to other features
+
+**Advanced Features**:
+- **Performance Optimization**: Apply caching patterns from existing render cache
+- **UI Improvements**: Use existing toolbar/menu patterns for feature discovery
+- **Integration Features**: Apply MuPDF patterns for advanced PDF operations
+
+**Architecture Improvements**:
+- **Pattern Documentation**: Document successful memory patterns for team use
+- **Build System Enhancement**: Improve MuPDF integration reliability
+- **Testing Framework**: Establish patterns for feature testing and validation

@@ -74,6 +74,10 @@ bool ExtractSinglePageToNewPDF(EngineBase* engine, int pageNumber, const char* o
 bool ExtractMultiplePagesToNewPDF(EngineBase* engine, int startPage, int endPage, const char* outputPath);
 bool ExtractPagesToNewPDF(EngineBase* engine, Vec<int>& pageNumbers, const char* outputPath);
 
+// Forward declaration for memory-safe page range structure
+struct PageRangeData;
+bool ExtractPageRangeToNewPDF(EngineBase* engine, const PageRangeData* data, const char* outputPath);
+
 /* EnginePs.cpp */
 
 bool IsEnginePsAvailable();

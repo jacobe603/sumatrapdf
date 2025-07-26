@@ -944,6 +944,9 @@
     <ClCompile Include="..\mupdf\source\pdf\pdf-object.c">
       <Filter>mupdf\source\pdf</Filter>
     </ClCompile>
+    <ClCompile Include="..\mupdf\source\pdf\pdf-outline.c">
+      <Filter>mupdf\source\pdf</Filter>
+    </ClCompile>
     <ClCompile Include="..\mupdf\source\pdf\pdf-op-buffer.c">
       <Filter>mupdf\source\pdf</Filter>
     </ClCompile>
@@ -951,9 +954,6 @@
       <Filter>mupdf\source\pdf</Filter>
     </ClCompile>
     <ClCompile Include="..\mupdf\source\pdf\pdf-op-run.c">
-      <Filter>mupdf\source\pdf</Filter>
-    </ClCompile>
-    <ClCompile Include="..\mupdf\source\pdf\pdf-outline.c">
       <Filter>mupdf\source\pdf</Filter>
     </ClCompile>
     <ClCompile Include="..\mupdf\source\pdf\pdf-page.c">

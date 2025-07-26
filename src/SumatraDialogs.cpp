@@ -1125,18 +1125,21 @@ static INT_PTR CALLBACK Dialog_ExtractPages_Proc(HWND hDlg, UINT msg, WPARAM wp,
                     AutoFreeWStr rangesW = HwndGetTextWTemp(editCtrl);
                     AutoFreeStr ranges = ToUtf8Temp(rangesW);
                     
-                    // Validate the single page number
-                    int pageNumber = ParseSinglePage(ranges, data->pageCount);
-                    if (pageNumber == 0) {
+                    // Validate the page ranges using new parser
+                    Vec<int>* pages = ParsePageRangeString(ranges, data->pageCount);
+                    if (!pages) {
                         // Show error message for invalid input
                         MessageBoxA(hDlg, 
-                                   _TRA("Invalid page number. Please enter a valid page number."),
+                                   _TRA("Invalid page range. Please enter valid page numbers or ranges (e.g., 1,3,5-10)."),
                                    _TRA("Invalid Input"), 
                                    MB_OK | MB_ICONWARNING);
                         return TRUE;
                     }
                     
-                    // Save the valid page number as string
+                    // Clean up the parsed pages (we just needed validation)
+                    delete pages;
+                    
+                    // Save the valid range string
                     data->pageRanges = str::Dup(ranges);
                     
                     EndDialog(hDlg, IDOK);
@@ -1300,10 +1303,162 @@ char* GetPageNumberFromUser(HWND hwnd, int pageCount, int currentPage) {
         return nullptr;
     }
     
+// Return simple duplicated string (JSON pattern)
+char* returnResult = str::Dup(data.userInput);
+logf("GetPageNumberFromUser: SUCCESS - Returning '%s'", returnResult);
+return returnResult;
+}
+
+// Enhanced page range input using JSON-style memory patterns (no complex ownership)
+char* GetPageRangeFromUser(HWND hwnd, int pageCount, int currentPage) {
+    logf("=== GetPageRangeFromUser: ENTRY ===");
+    logf("GetPageRangeFromUser: pageCount=%d, currentPage=%d", pageCount, currentPage);
+    
+    // Simple stack-allocated state (JSON pattern)
+    SimplePageInputData data = {};
+    data.pageCount = pageCount;
+    data.userClickedOK = false;
+    
+    // Set default text to current page (user can modify for ranges)
+    sprintf_s(data.userInput, sizeof(data.userInput), "%d", currentPage);
+    
+    logf("GetPageRangeFromUser: Showing dialog with default='%s'", data.userInput);
+    logf("GetPageRangeFromUser: User can enter single page or ranges like '1-5,8,12-15'");
+    
+    // Show dialog using simple procedure (same dialog as single page)
+    INT_PTR result = DialogBoxParam(GetModuleHandle(nullptr), 
+                                   MAKEINTRESOURCE(IDD_DIALOG_EXTRACT_PAGES), 
+                                   hwnd, 
+                                   SimplePageInputProc, 
+                                   (LPARAM)&data);
+    
+    if (result != IDOK || !data.userClickedOK) {
+        logf("GetPageRangeFromUser: User cancelled (result=%d, clickedOK=%d)", (int)result, data.userClickedOK);
+        return nullptr;
+    }
+    
+    logf("GetPageRangeFromUser: User entered='%s'", data.userInput);
+    
+    // Validate the input using our safe parsing function
+    PageRangeData rangeData = {};
+    if (!ParsePageRangesSafe(data.userInput, pageCount, &rangeData)) {
+        logf("GetPageRangeFromUser: ERROR - Invalid page range '%s'", data.userInput);
+        return nullptr;
+    }
+    
+    logf("GetPageRangeFromUser: Successfully parsed %d pages from range '%s'", rangeData.count, data.userInput);
+    
     // Return simple duplicated string (JSON pattern)
     char* returnResult = str::Dup(data.userInput);
-    logf("GetPageNumberFromUser: SUCCESS - Returning '%s'", returnResult);
+    logf("GetPageRangeFromUser: SUCCESS - Returning '%s'", returnResult);
     return returnResult;
+}
+
+static int IntCmp(const void* a, const void* b) {
+    int val1 = *(const int*)a;
+    int val2 = *(const int*)b;
+    if (val1 < val2) {
+        return -1;
+    }
+    if (val1 > val2) {
+        return 1;
+    }
+    return 0;
+}
+
+// DEPRECATED: Use ParsePageRangesSafe() instead to avoid Vec memory issues
+// Parse page range string into a vector of page numbers  
+// Supports formats like: "5", "1-5", "1,3,5-10", "2-5,8,12-15"
+// Returns nullptr if parsing fails, otherwise returns sorted list of valid page numbers
+// WARNING: This function uses Vec<int> which has caused heap corruption issues
+Vec<int>* ParsePageRangeString(const char* input, int totalPages) {
+    logf("=== ParsePageRangeString: ENTRY ===");
+    logf("ParsePageRangeString: input='%s', totalPages=%d", input ? input : "NULL", totalPages);
+    
+    if (!input || !*input || totalPages <= 0) {
+        logf("ParsePageRangeString: ERROR - Invalid parameters");
+        return nullptr;
+    }
+    
+    Vec<int>* pages = new Vec<int>();
+    
+    // Create a copy of input for tokenization
+    AutoFreeStr inputCopy = str::Dup(input);
+    str::TrimWSInPlace(inputCopy, str::TrimOpt::Both);
+    
+    // Split by commas
+    StrVec parts;
+    Split(&parts, inputCopy, ",", true); // true = trim whitespace
+    
+    for (const char* part : parts) {
+        if (!part || !*part) continue;
+        
+        logf("ParsePageRangeString: Processing part='%s'", part);
+        
+        // Check if this part contains a range (has '-')
+        const char* dashPos = str::Find(part, "-");
+        if (dashPos) {
+            // Parse range like "1-5"
+            TempStr startStr = str::Dup(part, dashPos - part);
+            const char* endStr = dashPos + 1;
+            
+            str::TrimWSInPlace(startStr, str::TrimOpt::Both);
+            
+            int startPage = atoi(startStr);
+            int endPage = atoi(endStr);
+            
+            logf("ParsePageRangeString: Range %d-%d", startPage, endPage);
+            
+            // Validate range
+            if (startPage <= 0 || endPage <= 0 || startPage > totalPages || endPage > totalPages) {
+                logf("ParsePageRangeString: ERROR - Invalid range %d-%d (valid: 1-%d)", startPage, endPage, totalPages);
+                delete pages;
+                return nullptr;
+            }
+            
+            if (startPage > endPage) {
+                logf("ParsePageRangeString: ERROR - Start page %d > end page %d", startPage, endPage);
+                delete pages;
+                return nullptr;
+            }
+            
+            // Add all pages in range
+            for (int i = startPage; i <= endPage; i++) {
+                pages->Append(i);
+            }
+        } else {
+            // Parse single page
+            int pageNum = atoi(part);
+            logf("ParsePageRangeString: Single page %d", pageNum);
+            
+            if (pageNum <= 0 || pageNum > totalPages) {
+                logf("ParsePageRangeString: ERROR - Invalid page %d (valid: 1-%d)", pageNum, totalPages);
+                delete pages;
+                return nullptr;
+            }
+            
+            pages->Append(pageNum);
+        }
+    }
+    
+    if (pages->Size() == 0) {
+        logf("ParsePageRangeString: ERROR - No valid pages found");
+        delete pages;
+        return nullptr;
+    }
+    
+    // Sort and remove duplicates
+    pages->Sort(IntCmp);
+    
+    // Remove duplicates
+    for (int i = pages->Size() - 1; i > 0; i--) {
+        if (pages->At(i) == pages->At(i - 1)) {
+            pages->RemoveAt(i);
+        }
+    }
+    
+    logf("ParsePageRangeString: SUCCESS - Found %d unique pages", pages->Size());
+    return pages;
 }
 
 // DEPRECATED: Legacy function for compatibility - DO NOT USE
@@ -1311,9 +1466,224 @@ char* GetPageNumberFromUser(HWND hwnd, int pageCount, int currentPage) {
 Vec<int>* ParsePageRanges(const char* input, int totalPages) {
     logf("=== ParsePageRanges: DEPRECATED FUNCTION CALLED ===");
     logf("ParsePageRanges: This function is deprecated and should not be used");
-    logf("ParsePageRanges: Use ParseSinglePage() instead");
+    logf("ParsePageRanges: Use ParsePageRangeString() instead");
     
     // Return nullptr to indicate this function should not be used
-    logf("ParsePageRanges: Returning nullptr - caller should use ParseSinglePage");
+    logf("ParsePageRanges: Returning nullptr - caller should use ParsePageRangeString");
     return nullptr;
+}
+
+// Helper function for integer comparison (for qsort)
+static int PageNumberCompare(const void* a, const void* b) {
+    int val1 = *(const int*)a;
+    int val2 = *(const int*)b;
+    if (val1 < val2) return -1;
+    if (val1 > val2) return 1;
+    return 0;
+}
+
+// Helper function to add a page number with bounds checking and duplicate prevention
+static void AddPageToRange(PageRangeData* data, int pageNumber) {
+    logf("AddPageToRange: Adding page %d (current count: %d)", pageNumber, data->count);
+    
+    // Bounds check
+    if (data->count >= 1000) {
+        logf("AddPageToRange: ERROR - Cannot add page %d, array full (max 1000)", pageNumber);
+        data->isValid = false;
+        return;
+    }
+    
+    // Check for duplicates (simple linear search since we'll sort later)
+    for (int i = 0; i < data->count; i++) {
+        if (data->pages[i] == pageNumber) {
+            logf("AddPageToRange: Page %d already exists, skipping duplicate", pageNumber);
+            return;
+        }
+    }
+    
+    // Add the page
+    data->pages[data->count] = pageNumber;
+    data->count++;
+    logf("AddPageToRange: Successfully added page %d (new count: %d)", pageNumber, data->count);
+}
+
+// Helper function to sort and deduplicate pages
+static void SortAndDeduplicatePages(PageRangeData* data) {
+    logf("SortAndDeduplicatePages: Sorting %d pages", data->count);
+    
+    if (data->count <= 1) {
+        logf("SortAndDeduplicatePages: %d pages, no sorting needed", data->count);
+        return;
+    }
+    
+    // Sort the pages
+    qsort(data->pages, data->count, sizeof(int), PageNumberCompare);
+    
+    // Remove duplicates (should be rare after AddPageToRange checks, but be safe)
+    int writeIndex = 0;
+    for (int readIndex = 0; readIndex < data->count; readIndex++) {
+        if (readIndex == 0 || data->pages[readIndex] != data->pages[readIndex - 1]) {
+            data->pages[writeIndex] = data->pages[readIndex];
+            writeIndex++;
+        }
+    }
+    
+    int originalCount = data->count;
+    data->count = writeIndex;
+    logf("SortAndDeduplicatePages: Reduced from %d to %d pages after deduplication", originalCount, data->count);
+}
+
+// Helper function to process a single range part like "5" or "1-10"
+static void ProcessRangePart(const char* part, int totalPages, PageRangeData* data) {
+    logf("ProcessRangePart: Processing part='%s'", part);
+    
+    if (!part || !*part) {
+        logf("ProcessRangePart: ERROR - Empty part");
+        data->isValid = false;
+        return;
+    }
+    
+    // Trim whitespace
+    while (*part && (*part == ' ' || *part == '\t')) part++;
+    if (!*part) {
+        logf("ProcessRangePart: ERROR - Part is only whitespace");
+        data->isValid = false;
+        return;
+    }
+    
+    // Find dash to determine if this is a range
+    const char* dashPos = strchr(part, '-');
+    
+    if (!dashPos) {
+        // Single page number
+        int pageNum = atoi(part);
+        logf("ProcessRangePart: Single page %d", pageNum);
+        
+        if (pageNum <= 0 || pageNum > totalPages) {
+            logf("ProcessRangePart: ERROR - Invalid page %d (valid: 1-%d)", pageNum, totalPages);
+            data->isValid = false;
+            return;
+        }
+        
+        AddPageToRange(data, pageNum);
+    } else {
+        // Range like "1-10"
+        // Create temporary buffers for start and end
+        char startBuffer[32];
+        char endBuffer[32];
+        
+        size_t startLen = dashPos - part;
+        if (startLen >= sizeof(startBuffer)) {
+            logf("ProcessRangePart: ERROR - Start number too long");
+            data->isValid = false;
+            return;
+        }
+        
+        strncpy_s(startBuffer, sizeof(startBuffer), part, startLen);
+        startBuffer[startLen] = '\0';
+        
+        strncpy_s(endBuffer, sizeof(endBuffer), dashPos + 1, _TRUNCATE);
+        
+        // Trim whitespace from both parts
+        char* startStr = startBuffer;
+        char* endStr = endBuffer;
+        while (*startStr && (*startStr == ' ' || *startStr == '\t')) startStr++;
+        while (*endStr && (*endStr == ' ' || *endStr == '\t')) endStr++;
+        
+        int startPage = atoi(startStr);
+        int endPage = atoi(endStr);
+        
+        logf("ProcessRangePart: Range %d-%d", startPage, endPage);
+        
+        // Validate range
+        if (startPage <= 0 || endPage <= 0 || startPage > totalPages || endPage > totalPages) {
+            logf("ProcessRangePart: ERROR - Invalid range %d-%d (valid: 1-%d)", startPage, endPage, totalPages);
+            data->isValid = false;
+            return;
+        }
+        
+        if (startPage > endPage) {
+            logf("ProcessRangePart: ERROR - Start page %d > end page %d", startPage, endPage);
+            data->isValid = false;
+            return;
+        }
+        
+        // Add all pages in range
+        for (int page = startPage; page <= endPage; page++) {
+            AddPageToRange(data, page);
+            if (!data->isValid) {
+                logf("ProcessRangePart: ERROR - Failed to add page %d", page);
+                return;
+            }
+        }
+    }
+}
+
+// Memory-safe page range parsing function (JSON pattern - no dynamic allocation)
+bool ParsePageRangesSafe(const char* input, int totalPages, PageRangeData* data) {
+    logf("=== ParsePageRangesSafe: ENTRY ===");
+    logf("ParsePageRangesSafe: input='%s', totalPages=%d", input ? input : "NULL", totalPages);
+    
+    if (!input || !*input || totalPages <= 0 || !data) {
+        logf("ParsePageRangesSafe: ERROR - Invalid parameters (input=%p, totalPages=%d, data=%p)", 
+             input, totalPages, data);
+        if (data) {
+            data->isValid = false;
+            data->count = 0;
+        }
+        return false;
+    }
+    
+    // Initialize data structure (JSON pattern - stack allocated)
+    memset(data, 0, sizeof(PageRangeData));
+    strncpy_s(data->inputText, sizeof(data->inputText), input, _TRUNCATE);
+    data->isValid = true; // Start optimistic, set false on any error
+    
+    // Use safe string splitting with stack buffer
+    char workBuffer[256];
+    strncpy_s(workBuffer, sizeof(workBuffer), input, _TRUNCATE);
+    
+    logf("ParsePageRangesSafe: Processing input in work buffer");
+    
+    // Process comma-separated parts using safe tokenization
+    char* context = nullptr;
+    char* token = strtok_s(workBuffer, ",", &context);
+    
+    while (token && data->isValid && data->count < 1000) {
+        ProcessRangePart(token, totalPages, data);
+        token = strtok_s(nullptr, ",", &context);
+    }
+    
+    if (!data->isValid) {
+        logf("ParsePageRangesSafe: ERROR - Parsing failed");
+        data->count = 0;
+        return false;
+    }
+    
+    if (data->count == 0) {
+        logf("ParsePageRangesSafe: ERROR - No valid pages found");
+        data->isValid = false;
+        return false;
+    }
+    
+    // Sort and deduplicate pages
+    SortAndDeduplicatePages(data);
+    
+    logf("ParsePageRangesSafe: SUCCESS - Found %d unique pages", data->count);
+    
+    // Log the first few and last few pages for debugging
+    if (data->count > 0) {
+        int logCount = (data->count > 10) ? 5 : data->count;
+        for (int i = 0; i < logCount; i++) {
+            logf("ParsePageRangesSafe: Page[%d] = %d", i, data->pages[i]);
+        }
+        if (data->count > 10) {
+            logf("ParsePageRangesSafe: ... (%d pages total) ...", data->count);
+            for (int i = data->count - 5; i < data->count; i++) {
+                logf("ParsePageRangesSafe: Page[%d] = %d", i, data->pages[i]);
+            }
+        }
+    }
+    
+    return true;
 }

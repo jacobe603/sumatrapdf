@@ -35,6 +35,7 @@ extern "C" {
 #include "SumatraConfig.h"
 #include "Settings.h"
 #include "GlobalPrefs.h"
+#include "SumatraDialogs.h"
 
 #include "utils/Log.h"
 
@@ -4504,43 +4505,47 @@ bool ExtractPagesToNewPDF(EngineBase* engine, Vec<int>& pageNumbers, const char*
     if (!engine || pageNumbers.Size() == 0 || !outputPath) {
         return false;
     }
-    
+
     EngineMupdf* epdf = AsEngineMupdf(engine);
     if (!epdf || !epdf->pdfdoc) {
         return false;
     }
-    
+
     ScopedCritSec cs(epdf->ctxAccess);
     fz_context* ctx = epdf->Ctx();
-    
+
     bool success = false;
     pdf_document* newDoc = nullptr;
-    
+    pdf_graft_map* graftMap = nullptr;
+
     fz_try(ctx) {
         int totalPages = pdf_count_pages(ctx, epdf->pdfdoc);
-        
+
         // Create a new PDF document
         newDoc = pdf_create_document(ctx);
         if (!newDoc) {
             return false;
         }
-        
+
+        // Create a graft map for resource copying
+        graftMap = pdf_new_graft_map(ctx, newDoc);
+        if (!graftMap) {
+            return false;
+        }
+
         // Extract each page in the specified order
         for (size_t i = 0; i < pageNumbers.Size(); i++) {
-            int pageNo = pageNumbers[i];
-            
+            int pageNo = pageNumbers.at(i);
+
             // Validate page number (1-based)
             if (pageNo < 1 || pageNo > totalPages) {
                 continue;
             }
-            
-            // Get page object and insert into new document
-            pdf_obj* srcPageObj = pdf_lookup_page_obj(ctx, epdf->pdfdoc, pageNo - 1);
-            if (srcPageObj) {
-                pdf_insert_page(ctx, newDoc, -1, srcPageObj);
-            }
+
+            // Graft the page with proper resource copying (0-based index)
+            pdf_graft_mapped_page(ctx, graftMap, -1, epdf->pdfdoc, pageNo - 1);
         }
-        
+
         // Save if we have pages
         if (pdf_count_pages(ctx, newDoc) > 0) {
             pdf_save_document(ctx, newDoc, outputPath, nullptr);
@@ -4550,10 +4555,120 @@ bool ExtractPagesToNewPDF(EngineBase* engine, Vec<int>& pageNumbers, const char*
     fz_catch(ctx) {
         success = false;
     }
-    
+
+    // Clean up graft map and new document
+    if (graftMap) {
+        pdf_drop_graft_map(ctx, graftMap);
+    }
     if (newDoc) {
         pdf_drop_document(ctx, newDoc);
     }
+
+    return success;
+}
+
+// Memory-safe page range extraction using PageRangeData structure
+bool ExtractPageRangeToNewPDF(EngineBase* engine, const PageRangeData* data, const char* outputPath) {
+    logf("=== ExtractPageRangeToNewPDF: ENTRY ===");
     
+    if (!engine || !data || !outputPath || !data->isValid || data->count <= 0) {
+        logf("ExtractPageRangeToNewPDF: ERROR - Invalid parameters (engine=%p, data=%p, outputPath=%p)", 
+             engine, data, outputPath);
+        if (data) {
+            logf("ExtractPageRangeToNewPDF: data->isValid=%d, data->count=%d", data->isValid, data->count);
+        }
+        return false;
+    }
+    
+    logf("ExtractPageRangeToNewPDF: Extracting %d pages to '%s'", data->count, outputPath);
+    logf("ExtractPageRangeToNewPDF: Original input was '%s'", data->inputText);
+    
+    // Special case: single page - use existing proven function
+    if (data->count == 1) {
+        logf("ExtractPageRangeToNewPDF: Single page %d - using ExtractSinglePageToNewPDF", data->pages[0]);
+        bool result = ExtractSinglePageToNewPDF(engine, data->pages[0], outputPath);
+        logf("ExtractPageRangeToNewPDF: Single page extraction result: %d", result);
+        return result;
+    }
+    
+    // Multiple pages - use proper grafting approach
+    EngineMupdf* epdf = AsEngineMupdf(engine);
+    if (!epdf || !epdf->pdfdoc) {
+        logf("ExtractPageRangeToNewPDF: ERROR - Invalid MuPDF engine");
+        return false;
+    }
+    
+    ScopedCritSec cs(epdf->ctxAccess);
+    fz_context* ctx = epdf->Ctx();
+    
+    bool success = false;
+    pdf_document* newDoc = nullptr;
+    pdf_graft_map* graftMap = nullptr;
+    
+    fz_try(ctx) {
+        // Validate all page numbers against document
+        int totalPages = pdf_count_pages(ctx, epdf->pdfdoc);
+        logf("ExtractPageRangeToNewPDF: Document has %d total pages", totalPages);
+        
+        for (int i = 0; i < data->count; i++) {
+            if (data->pages[i] < 1 || data->pages[i] > totalPages) {
+                logf("ExtractPageRangeToNewPDF: ERROR - Invalid page %d (valid: 1-%d)", 
+                     data->pages[i], totalPages);
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "Invalid page number");
+            }
+        }
+        
+        // Create a new PDF document
+        newDoc = pdf_create_document(ctx);
+        if (!newDoc) {
+            logf("ExtractPageRangeToNewPDF: ERROR - Failed to create new document");
+            fz_throw(ctx, FZ_ERROR_GENERIC, "Failed to create document");
+        }
+        
+        // Create graft map for proper resource copying
+        graftMap = pdf_new_graft_map(ctx, newDoc);
+        if (!graftMap) {
+            logf("ExtractPageRangeToNewPDF: ERROR - Failed to create graft map");
+            fz_throw(ctx, FZ_ERROR_GENERIC, "Failed to create graft map");
+        }
+        
+        logf("ExtractPageRangeToNewPDF: Grafting pages using proper MuPDF API");
+        
+        // Graft each page using proper resource copying (following ExtractSinglePageToNewPDF pattern)
+        for (int i = 0; i < data->count; i++) {
+            int pageNumber = data->pages[i];
+            logf("ExtractPageRangeToNewPDF: Grafting page %d (index %d)", pageNumber, pageNumber - 1);
+            
+            // Use same approach as ExtractSinglePageToNewPDF
+            pdf_graft_mapped_page(ctx, graftMap, -1, epdf->pdfdoc, pageNumber - 1);
+            
+            logf("ExtractPageRangeToNewPDF: Successfully grafted page %d", pageNumber);
+        }
+        
+        logf("ExtractPageRangeToNewPDF: Saving document to '%s'", outputPath);
+        
+        // Save the new document
+        pdf_save_document(ctx, newDoc, outputPath, nullptr);
+        success = true;
+        
+        logf("ExtractPageRangeToNewPDF: Successfully saved %d pages", data->count);
+        
+    }
+    fz_catch(ctx) {
+        success = false;
+        logf("ExtractPageRangeToNewPDF: ERROR - Exception during extraction: %s", fz_caught_message(ctx));
+    }
+    
+    // Clean up resources
+    if (graftMap) {
+        pdf_drop_graft_map(ctx, graftMap);
+        logf("ExtractPageRangeToNewPDF: Cleaned up graft map");
+    }
+    if (newDoc) {
+        pdf_drop_document(ctx, newDoc);
+        logf("ExtractPageRangeToNewPDF: Cleaned up new document");
+    }
+    
+    logf("ExtractPageRangeToNewPDF: Final result: %d", success);
     return success;
 }

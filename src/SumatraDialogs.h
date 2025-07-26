@@ -12,10 +12,21 @@ bool Dialog_CustomZoom(HWND hwnd, bool forChm, float* currZoomInOut);
 INT_PTR Dialog_Settings(HWND hwnd, GlobalPrefs* prefs);
 bool Dialog_AddFavorite(HWND hwnd, const char* pageNo, AutoFreeStr& favName);
 
+// Memory-safe page range data structure (JSON pattern - stack allocated)
+struct PageRangeData {
+    int pages[1000];        // Fixed array - no dynamic allocation
+    int count;              // Simple count tracking  
+    char inputText[256];    // Copy of user input for debugging
+    bool isValid;           // Simple validation flag
+};
+
 // Page extraction dialog and utilities
 int ParseSinglePage(const char* input, int totalPages);
 char* GetPageNumberFromUser(HWND hwnd, int pageCount, int currentPage);
-Vec<int>* ParsePageRanges(const char* input, int totalPages);
+char* GetPageRangeFromUser(HWND hwnd, int pageCount, int currentPage);
+bool ParsePageRangesSafe(const char* input, int totalPages, PageRangeData* data);
+Vec<int>* ParsePageRangeString(const char* input, int totalPages); // DEPRECATED: Use ParsePageRangesSafe() instead
+Vec<int>* ParsePageRanges(const char* input, int totalPages); // DEPRECATED
 char* Dialog_ExtractPages(HWND hwnd, int pageCount, int currentPage);
 
 enum class PrintRangeAdv { All = 0, Even, Odd };
