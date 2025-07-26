@@ -99,6 +99,8 @@ EXPORTS
 	pdf_new_graft_map
 	pdf_drop_graft_map
 	pdf_graft_mapped_object
+	pdf_graft_mapped_page
+	pdf_graft_page
 	pdf_add_object
 	pdf_flatten_inheritable_page_items
 	fz_resolve_link
