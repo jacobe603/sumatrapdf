@@ -363,6 +363,13 @@ void UpdateTocExpansionState(Vec<int>& tocState, TreeView* treeView, TocTree* do
         // CrashMe();
         return;
     }
+    
+    // Add null pointer checks to prevent crash during exit after bookmark deletion
+    if (!docTree || !docTree->root) {
+        tocState.Reset();
+        return;
+    }
+    
     tocState.Reset();
     TocItem* tocItem = docTree->root->child;
     UpdateDocTocExpansionStateRecur(treeView, tocState, tocItem);

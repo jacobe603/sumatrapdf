@@ -37,6 +37,8 @@ extern "C" {
 #include "GlobalPrefs.h"
 #include "SumatraDialogs.h"
 
+#include <functional> // For std::function used in recursive lambda
+
 #include "utils/Log.h"
 
 // A5
@@ -51,6 +53,14 @@ static float layoutFontEm = 11.f;
 
 // in mupdf_load_system_font.c
 extern "C" void install_load_windows_font_funcs(fz_context* ctx);
+
+// Forward declaration for annotation copying helper function
+static int CopyPageAnnotations(fz_context* ctx, pdf_document* srcDoc, pdf_document* dstDoc, 
+                              int srcPageNo, int dstPageNo);
+
+// Forward declaration for outline/bookmark copying helper function  
+static int CopyRelevantOutlines(fz_context* ctx, pdf_document* srcDoc, pdf_document* dstDoc,
+                               const int* pageNumbers, int pageCount);
 
 static AnnotationType AnnotationTypeFromPdfAnnot(enum pdf_annot_type tp) {
     return (AnnotationType)tp;
@@ -4429,6 +4439,35 @@ bool ExtractSinglePageToNewPDF(EngineBase* engine, int pageNumber, const char* o
         // Clean up the graft map
         pdf_drop_graft_map(ctx, graftMap);
         
+        // Copy annotations from source page to destination page
+        int annotationsCopied = CopyPageAnnotations(ctx, epdf->pdfdoc, newDoc, 
+                                                   pageNumber - 1, 0);
+        if (annotationsCopied > 0) {
+            logf("ExtractSinglePageToNewPDF: Copied %d annotations from page %d", 
+                 annotationsCopied, pageNumber);
+        } else if (annotationsCopied == 0) {
+            logf("ExtractSinglePageToNewPDF: No annotations found on page %d", pageNumber);
+        } else {
+            logf("ExtractSinglePageToNewPDF: WARNING - Failed to copy annotations from page %d", 
+                 pageNumber);
+        }
+        
+        // Copy relevant bookmarks/outlines
+        // DISABLED: Bookmark copying temporarily disabled due to navigation issues
+        /*
+        int bookmarksCopied = CopyRelevantOutlines(ctx, epdf->pdfdoc, newDoc, 
+                                                  &pageNumber, 1);
+        if (bookmarksCopied > 0) {
+            logf("ExtractSinglePageToNewPDF: Copied %d bookmarks for page %d", 
+                 bookmarksCopied, pageNumber);
+        } else if (bookmarksCopied == 0) {
+            logf("ExtractSinglePageToNewPDF: No relevant bookmarks found for page %d", pageNumber);
+        } else {
+            logf("ExtractSinglePageToNewPDF: WARNING - Failed to copy bookmarks for page %d", 
+                 pageNumber);
+        }
+        */
+        
         // Save the new document
         pdf_save_document(ctx, newDoc, outputPath, nullptr);
         success = true;
@@ -4643,7 +4682,35 @@ bool ExtractPageRangeToNewPDF(EngineBase* engine, const PageRangeData* data, con
             pdf_graft_mapped_page(ctx, graftMap, -1, epdf->pdfdoc, pageNumber - 1);
             
             logf("ExtractPageRangeToNewPDF: Successfully grafted page %d", pageNumber);
+            
+            // Copy annotations from source page to destination page
+            int annotationsCopied = CopyPageAnnotations(ctx, epdf->pdfdoc, newDoc, 
+                                                       pageNumber - 1, i);
+            if (annotationsCopied > 0) {
+                logf("ExtractPageRangeToNewPDF: Copied %d annotations from page %d", 
+                     annotationsCopied, pageNumber);
+            } else if (annotationsCopied == 0) {
+                logf("ExtractPageRangeToNewPDF: No annotations found on page %d", pageNumber);
+            } else {
+                logf("ExtractPageRangeToNewPDF: WARNING - Failed to copy annotations from page %d", 
+                     pageNumber);
+            }
         }
+        
+        // Copy relevant bookmarks/outlines for all extracted pages
+        // DISABLED: Bookmark copying temporarily disabled due to navigation issues
+        /*
+        int bookmarksCopied = CopyRelevantOutlines(ctx, epdf->pdfdoc, newDoc, 
+                                                  data->pages, data->count);
+        if (bookmarksCopied > 0) {
+            logf("ExtractPageRangeToNewPDF: Copied %d bookmarks for %d pages", 
+                 bookmarksCopied, data->count);
+        } else if (bookmarksCopied == 0) {
+            logf("ExtractPageRangeToNewPDF: No relevant bookmarks found for extracted pages");
+        } else {
+            logf("ExtractPageRangeToNewPDF: WARNING - Failed to copy bookmarks for extracted pages");
+        }
+        */
         
         logf("ExtractPageRangeToNewPDF: Saving document to '%s'", outputPath);
         
@@ -4672,3 +4739,366 @@ bool ExtractPageRangeToNewPDF(EngineBase* engine, const PageRangeData* data, con
     logf("ExtractPageRangeToNewPDF: Final result: %d", success);
     return success;
 }
+
+// Copy annotations from source page to destination page in extracted document
+// Returns number of annotations copied, or -1 on error
+static int CopyPageAnnotations(fz_context* ctx, pdf_document* srcDoc, pdf_document* dstDoc, 
+                              int srcPageNo, int dstPageNo) {
+    logf("=== CopyPageAnnotations: ENTRY ===");
+    logf("CopyPageAnnotations: Copying annotations from source page %d to dest page %d", srcPageNo, dstPageNo);
+    
+    if (!ctx || !srcDoc || !dstDoc || srcPageNo < 0 || dstPageNo < 0) {
+        logf("CopyPageAnnotations: ERROR - Invalid parameters");
+        return -1;
+    }
+    
+    int annotationsCopied = 0;
+    
+    fz_try(ctx) {
+        // Load source and destination pages
+        pdf_page* srcPage = pdf_load_page(ctx, srcDoc, srcPageNo);
+        pdf_page* dstPage = pdf_load_page(ctx, dstDoc, dstPageNo);
+        
+        if (!srcPage || !dstPage) {
+            logf("CopyPageAnnotations: ERROR - Could not load pages (src=%p, dst=%p)", srcPage, dstPage);
+            logf("CopyPageAnnotations: Source doc page count: %d, Dest doc page count: %d", 
+                 pdf_count_pages(ctx, srcDoc), pdf_count_pages(ctx, dstDoc));
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Failed to load pages");
+        }
+        
+        logf("CopyPageAnnotations: Successfully loaded source and destination pages");
+        
+        // First, check if source page has any annotations at all
+        pdf_annot* firstAnnot = pdf_first_annot(ctx, srcPage);
+        if (!firstAnnot) {
+            logf("CopyPageAnnotations: No annotations found on source page %d", srcPageNo);
+            return 0;  // Not an error, just no annotations to copy
+        }
+        
+        logf("CopyPageAnnotations: Found annotations on source page, proceeding with copy");
+        
+        // Enumerate annotations on source page
+        pdf_annot* srcAnnot = pdf_first_annot(ctx, srcPage);
+        while (srcAnnot) {
+            logf("CopyPageAnnotations: Processing annotation type %d", pdf_annot_type(ctx, srcAnnot));
+            
+            // Get annotation properties from source
+            enum pdf_annot_type annotType = pdf_annot_type(ctx, srcAnnot);
+            
+            // Get annotation colors
+            float color[4] = {0};
+            int colorComponents = 0;
+            pdf_annot_color(ctx, srcAnnot, &colorComponents, color);
+            
+            // Get annotation contents
+            const char* contents = pdf_annot_contents(ctx, srcAnnot);
+            
+            logf("CopyPageAnnotations: Annotation details - type:%d, colors:%d", 
+                 annotType, colorComponents);
+            
+            // Create new annotation on destination page
+            pdf_annot* dstAnnot = pdf_create_annot(ctx, dstPage, annotType);
+            if (dstAnnot) {
+                // Handle annotation-specific properties
+                if (annotType == PDF_ANNOT_HIGHLIGHT) {
+                    // Handle highlight-specific properties (quad points) first
+                    int quadCount = pdf_annot_quad_point_count(ctx, srcAnnot);
+                    if (quadCount > 0) {
+                        logf("CopyPageAnnotations: Copying %d quad points for highlight annotation", quadCount);
+                        
+                        // Copy quad points for precise highlight positioning
+                        fz_quad* quads = (fz_quad*)fz_malloc(ctx, quadCount * sizeof(fz_quad));
+                        for (int i = 0; i < quadCount; i++) {
+                            quads[i] = pdf_annot_quad_point(ctx, srcAnnot, i);
+                        }
+                        pdf_set_annot_quad_points(ctx, dstAnnot, quadCount, quads);
+                        fz_free(ctx, quads);
+                    }
+                } else {
+                    // For non-highlight annotations, copy the rect property
+                    if (pdf_annot_has_rect(ctx, srcAnnot)) {
+                        fz_rect annotRect = pdf_annot_rect(ctx, srcAnnot);
+                        pdf_set_annot_rect(ctx, dstAnnot, annotRect);
+                        logf("CopyPageAnnotations: Copied rect for annotation type %d", annotType);
+                    }
+                }
+                
+                if (colorComponents > 0) {
+                    pdf_set_annot_color(ctx, dstAnnot, colorComponents, color);
+                }
+                
+                if (contents) {
+                    pdf_set_annot_contents(ctx, dstAnnot, contents);
+                }
+                
+                // Copy flags and other properties
+                int flags = pdf_annot_flags(ctx, srcAnnot);
+                pdf_set_annot_flags(ctx, dstAnnot, flags);
+                
+                // Update the annotation to finalize changes
+                pdf_update_annot(ctx, dstAnnot);
+                
+                annotationsCopied++;
+                logf("CopyPageAnnotations: Successfully copied annotation #%d", annotationsCopied);
+            } else {
+                logf("CopyPageAnnotations: ERROR - Failed to create destination annotation");
+            }
+            
+            // Move to next annotation
+            srcAnnot = pdf_next_annot(ctx, srcAnnot);
+        }
+        
+        logf("CopyPageAnnotations: Completed copying %d annotations", annotationsCopied);
+        
+        // If we copied any annotations, make sure the destination page is updated
+        if (annotationsCopied > 0) {
+            logf("CopyPageAnnotations: Updating destination page to finalize annotations");
+            // Note: pdf_update_annot is called for each annotation, but we may need
+            // to ensure the page itself is marked as modified
+        }
+        
+    }
+    fz_catch(ctx) {
+        logf("CopyPageAnnotations: ERROR - Exception during annotation copying: %s", fz_caught_message(ctx));
+        return -1;
+    }
+    
+    logf("CopyPageAnnotations: Final result: %d annotations copied", annotationsCopied);
+    return annotationsCopied;
+}
+
+// Copy relevant outlines/bookmarks from source document to destination document
+// Uses proven MuPDF pattern: insert parent → recreate iterator → manual search → navigate down → insert children
+// Returns number of bookmarks copied, or -1 on error
+// DISABLED: Function temporarily disabled - suppress unreferenced function warning
+#pragma warning(push)
+#pragma warning(disable: 4505) // unreferenced function with internal linkage removed
+static int CopyRelevantOutlines(fz_context* ctx, pdf_document* srcDoc, pdf_document* dstDoc,
+                               const int* pageNumbers, int pageCount) {
+    logf("=== CopyRelevantOutlines: ENTRY (Using Proven MuPDF Pattern) ===");
+    logf("CopyRelevantOutlines: Copying bookmarks with hierarchy for %d pages", pageCount);
+    
+    if (!ctx || !srcDoc || !dstDoc || !pageNumbers || pageCount <= 0) {
+        logf("CopyRelevantOutlines: ERROR - Invalid parameters");
+        return -1;
+    }
+    
+    int bookmarksCopied = 0;
+    fz_outline* srcOutline = nullptr;
+    fz_outline_iterator* dstIter = nullptr;
+    
+    fz_try(ctx) {
+        // Load the source document's outline/bookmarks
+        srcOutline = fz_load_outline(ctx, (fz_document*)srcDoc);
+        if (!srcOutline) {
+            logf("CopyRelevantOutlines: No outline found in source document");
+            return 0; // Not an error, just no bookmarks to copy
+        }
+        
+        logf("CopyRelevantOutlines: Loaded source outline, processing with proven pattern");
+        
+        // Helper function to check if a page number is in our extraction list
+        auto pageIsBeingExtracted = [pageNumbers, pageCount](int pageNo) -> int {
+            for (int i = 0; i < pageCount; i++) {
+                if (pageNumbers[i] == pageNo + 1) { // pageNumbers is 1-based, pageNo is 0-based
+                    return i; // Return the new page index (0-based) in extracted document
+                }
+            }
+            return -1; // Not found
+        };
+        
+        // Helper function to get page number from outline entry
+        auto getPageNumber = [&](fz_outline* outline) -> int {
+            if (!outline->uri) return -1;
+            
+            // Parse page destination from URI
+            if (str::StartsWith(outline->uri, "#page=")) {
+                return atoi(outline->uri + 6) - 1; // Convert to 0-based
+            } else {
+                // Try to resolve the destination
+                fz_location loc = fz_resolve_link(ctx, (fz_document*)srcDoc, outline->uri, nullptr, nullptr);
+                return (loc.page >= 0) ? loc.page : -1;
+            }
+        };
+        
+        // Function to check if any descendant bookmarks are relevant
+        auto hasRelevantDescendants = [&](fz_outline* outline, auto& self) -> bool {
+            if (!outline) return false;
+            
+            fz_outline* current = outline;
+            while (current) {
+                // Check if this bookmark directly points to an extracted page
+                int pageNo = getPageNumber(current);
+                if (pageNo >= 0 && pageIsBeingExtracted(pageNo) >= 0) {
+                    return true;
+                }
+                
+                // Check children recursively
+                if (current->down && self(current->down, self)) {
+                    return true;
+                }
+                
+                current = current->next;
+            }
+            return false;
+        };
+        
+        // Helper function to find bookmark by title using manual search (proven pattern)
+        auto findBookmarkByTitle = [&](fz_outline_iterator* iter, const char* title) -> bool {
+            // Navigate to root first
+            while (fz_outline_iterator_up(ctx, iter) == 0) {
+                // Continue going up to top level
+            }
+            
+            // Search for bookmark with matching title
+            do {
+                fz_outline_item* current = fz_outline_iterator_item(ctx, iter);
+                if (current && current->title && strcmp(current->title, title) == 0) {
+                    logf("CopyRelevantOutlines: Found bookmark '%s' via manual search", title);
+                    return true;
+                }
+            } while (fz_outline_iterator_next(ctx, iter) == 0);
+            
+            logf("CopyRelevantOutlines: Could not find bookmark '%s'", title);
+            return false;
+        };
+        
+        // Function to insert bookmark with children using proven CreateHierarchicalSearchBookmarks pattern
+        // Declare std::function first to enable recursion
+        std::function<bool(fz_outline*)> insertBookmarkWithChildren;
+        
+        // Define the lambda function with proper scope
+        insertBookmarkWithChildren = [&](fz_outline* srcBm) -> bool {
+            if (!srcBm || !srcBm->title) return false;
+            
+            int originalPageNo = getPageNumber(srcBm);
+            int newPageIndex = (originalPageNo >= 0) ? pageIsBeingExtracted(originalPageNo) : -1;
+            bool hasRelevantChildren = hasRelevantDescendants(srcBm->down, hasRelevantDescendants);
+            
+            // Only process if bookmark is relevant
+            if (newPageIndex < 0 && !hasRelevantChildren) {
+                return false;
+            }
+            
+            // STEP 1: Insert parent bookmark
+            fz_outline_item parentItem = {0};
+            char* parentTitle = str::Dup(srcBm->title); // Use str::Dup like proven pattern
+            parentItem.title = parentTitle;
+            parentItem.is_open = srcBm->is_open;
+            parentItem.flags = 0;
+            parentItem.r = 0.0f;
+            parentItem.g = 0.0f;
+            parentItem.b = 0.0f;
+            
+            if (newPageIndex >= 0) {
+                // Direct page reference - use TempStr like proven pattern
+                TempStr pageUri = str::FormatTemp("#page=%d", newPageIndex + 1);
+                parentItem.uri = (char*)pageUri;
+                logf("CopyRelevantOutlines: Inserting direct bookmark '%s' -> page %d", 
+                     srcBm->title, newPageIndex + 1);
+            } else {
+                // Parent bookmark without direct page destination
+                parentItem.uri = nullptr;
+                logf("CopyRelevantOutlines: Inserting parent bookmark '%s' (has relevant children)", 
+                     srcBm->title);
+            }
+            
+            int result = fz_outline_iterator_insert(ctx, dstIter, &parentItem);
+            free(parentTitle); // Clean up allocated title
+            
+            if (result < 0) {
+                logf("CopyRelevantOutlines: Failed to insert parent bookmark '%s', result: %d", 
+                     srcBm->title, result);
+                return false;
+            }
+            
+            bookmarksCopied++;
+            logf("CopyRelevantOutlines: Successfully inserted parent bookmark '%s'", srcBm->title);
+            
+            // STEP 2: If bookmark has relevant children, use proven pattern to add them
+            if (hasRelevantChildren && srcBm->down) {
+                logf("CopyRelevantOutlines: Parent '%s' has children, applying proven pattern", srcBm->title);
+                
+                // STEP 3: Recreate iterator (critical step from proven pattern!)
+                fz_drop_outline_iterator(ctx, dstIter);
+                dstIter = pdf_new_outline_iterator(ctx, dstDoc);
+                if (!dstIter) {
+                    logf("CopyRelevantOutlines: ERROR - Failed to recreate iterator");
+                    fz_throw(ctx, FZ_ERROR_GENERIC, "Failed to recreate outline iterator");
+                }
+                
+                logf("CopyRelevantOutlines: Recreated iterator for '%s'", srcBm->title);
+                
+                // STEP 4: Manual search for the parent we just created (proven pattern)
+                if (findBookmarkByTitle(dstIter, srcBm->title)) {
+                    // STEP 5: Navigate down (accept both 0 and 1 as success, proven pattern)
+                    int downResult = fz_outline_iterator_down(ctx, dstIter);
+                    logf("CopyRelevantOutlines: Down navigation result for '%s': %d", 
+                         srcBm->title, downResult);
+                    
+                    if (downResult >= 0) { // Accept both 0 and 1 like proven pattern
+                        logf("CopyRelevantOutlines: Successfully navigated into '%s', adding children", 
+                             srcBm->title);
+                        
+                        // STEP 6: Add children
+                        fz_outline* child = srcBm->down;
+                        while (child) {
+                            // Recursively handle each child (which might also have children)
+                            insertBookmarkWithChildren(child);
+                            child = child->next;
+                        }
+                        
+                        logf("CopyRelevantOutlines: Completed adding children for '%s'", srcBm->title);
+                    } else {
+                        logf("CopyRelevantOutlines: Could not navigate into '%s', children will be missing", 
+                             srcBm->title);
+                    }
+                } else {
+                    logf("CopyRelevantOutlines: Could not find parent '%s' after insertion", srcBm->title);
+                }
+            }
+            
+            return true;
+        };
+        
+        // Initialize destination iterator
+        dstIter = pdf_new_outline_iterator(ctx, dstDoc);
+        if (!dstIter) {
+            logf("CopyRelevantOutlines: ERROR - Failed to create destination outline iterator");
+            fz_throw(ctx, FZ_ERROR_GENERIC, "Failed to create outline iterator");
+        }
+        
+        // Navigate to end of existing bookmarks in destination
+        while (fz_outline_iterator_next(ctx, dstIter) == 0) {
+            // Continue to end
+        }
+        
+        logf("CopyRelevantOutlines: Positioned at end of destination outline tree");
+        
+        // Process all top-level bookmarks from source
+        fz_outline* current = srcOutline;
+        while (current) {
+            insertBookmarkWithChildren(current);
+            current = current->next;
+        }
+        
+        logf("CopyRelevantOutlines: Completed processing, copied %d bookmarks using proven pattern", bookmarksCopied);
+        
+    }
+    fz_catch(ctx) {
+        bookmarksCopied = -1;
+        logf("CopyRelevantOutlines: ERROR - Exception during outline copying: %s", fz_caught_message(ctx));
+    }
+    
+    // Clean up resources
+    if (srcOutline) {
+        fz_drop_outline(ctx, srcOutline);
+    }
+    if (dstIter) {
+        fz_drop_outline_iterator(ctx, dstIter);
+    }
+    
+    logf("CopyRelevantOutlines: Final result: %d bookmarks copied", bookmarksCopied);
+    return bookmarksCopied;
+}
+#pragma warning(pop) // Restore warning settings
